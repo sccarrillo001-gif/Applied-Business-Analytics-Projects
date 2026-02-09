@@ -1,0 +1,441 @@
+---
+title: "DAT-4313 Show the Right Numbers  (Chapter 4)"
+subtitle: "Healy Chapter 3 Textbook Replication LECTURE SUPPORT"
+author: "dr-v-jbu"
+format:
+  html: 
+    code-fold: true
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: true
+toc-location: left
+number-sections: false
+editor: source
+---
+
+## Section 4.2: Grouped Data and the Grouped Aesthetic
+
+Look at the `gapminder` dataset\
+
+```{r}
+library(gapminder) 
+#View(gapminder)
+head(gapminder,10)
+```
+
+### Figure 4.1: Try to plot `gdpPercap` over time by country
+
+```{r}
+library(ggplot2)
+p <- ggplot(data = gapminder, mapping = aes(x=year, y=gdpPercap))
+p + geom_line() +
+	  labs(title="Figure 4.1: Try to plot gdpPercap over time by country")
+```
+
+This is a funny-looking line chart!\
+However, you have multiple observations for year -- one for each country, so it just just tries to stack up each obs per year.\
+
+**This code would have worked if we only had one country.**
+
+"When `ggplot2` successfully makes a plot but the result looks insane, the reason is almost always that something has gone wrong in the mapping between the data and aesthetics for the geom being used." - Healy
+
+### Figure 4.2: Try to plot `gdpPercap` over time by country -- again
+
+Fix Figures 4.1 by grouping by country.\
+NOTE this is not manipulating the dataset, but rather group tells `ggplot2` to create a separate geom_line for each country over time.\
+
+```{r}
+p <- ggplot(data = gapminder, mapping = aes(x=year, y=gdpPercap))
+p + geom_line(aes(group = country)) +
+	  labs(title="Figure 4.2: Try to plot gdpPercap over time by country -- again")
+```
+
+This plot is now correct.....but is not very useful.\
+
+------------------------------------------------------------------------
+
+## Section 4.3: Facet to Make Small Multiples
+
+### Figure 4.3: Faceting by continent
+
+One way to make this easier to see is to FACET the data by a third variable -- continent.
+
+-   This will create multiple subplots with the same, synchronized x and y axes.
+
+-   `facet_wrap` is the argument we use to create facets.
+
+-   Within the argument, we will use the "formula" syntax using the tilde (\~).
+
+-   We will start with a simple formula -- using only one side (read this as "BY")\
+
+```{r}
+p <- ggplot(data = gapminder, mapping = aes(x=year, y=gdpPercap))
+p + geom_line(aes(group = country)) + 
+		facet_wrap( ~ continent) +
+	  labs(title = "Figure 4.3: Faceting by continent")
+```
+
+Let's improve the look of this graph....
+
+### Figure 4.4: Faceting by continent, again.
+
+5 columns, make smooth w/o error width, use light gray for country trends.
+
+```{r}
+p <- ggplot(data = gapminder, mapping = aes(x=year, y=gdpPercap))
+p + geom_line(color="gray70", aes(group = country)) + 
+		geom_smooth(size = 1.1, method = "loess", se = FALSE) + 
+		scale_y_log10(labels = scales::dollar) + 
+		facet_wrap(~continent, ncol=5) + 
+		labs(x="Year", 
+				 y="GDP per capita", 
+				 title="Figure 4.4: GDP per capita on Five Continents")
+```
+
+### INSTRUCTOR'S ASIDE -- different smoothing / line fitting methods
+
+(See slide deck for more information on methods.)
+
+```{r}
+p <- ggplot(gapminder, aes(x=gdpPercap, y=lifeExp)) +
+     geom_point() 
+
+p + geom_smooth(method = "lm")    + scale_x_log10() + labs(title = "METHOD = lm")
+p + geom_smooth(method = "gam")   + scale_x_log10() + labs(title = "METHOD = gam") 
+p + geom_smooth(method = "loess") + scale_x_log10() + labs(title = "METHOD = loess") 
+
+```
+
+### Figure 4.5: Faceting on two categorical vars -- age & nbr children by gender and race
+
+Use `gss_sm` dataset within the `socviz` package\
+First, let's look at the relationship between `age of child` and `number of children`
+
+```{r}
+library(socviz)
+p <- ggplot(gss_sm, aes(x=age, y=childs))+
+	   geom_point(alpha = 0.2) + 
+     geom_smooth()  
+p
+```
+
+Let's facet by just gender:
+
+```{r}
+p + facet_grid( ~ sex)
+```
+
+Or we can facet by just race:
+
+```{r}
+p + facet_grid( ~ race)
+```
+
+Now, let's facet by both race and gender:
+
+```{r}
+p + facet_grid(sex ~ race)
+```
+
+Let's just use a cleaner aesthetic -- minimal lines and shading using `theme_minimal()`
+
+```{r}
+p + facet_grid(sex ~ race) +
+	  labs(title="Figure 4.5 Faceting on two categoricals") +
+	  theme_minimal()
+```
+
+Thus, a two-way facet by categoricals is useful when the number of factor levels are few for each.\
+Here is an example -- quite useless!
+
+```{r}
+ggplot(gapminder, aes(x=year, y=gdpPercap)) +
+   geom_line(aes(group = country)) + 
+	 facet_wrap(country ~ continent)
+```
+
+------------------------------------------------------------------------
+
+## Section 4.4: Geoms Can Transform Data \[Let's show using categorical variable(s)\]
+
+### Figure 4.6: Create a bar chart with geom_bar.
+
+Note how it uses the **default** `stat_function` -- in this case it's counting.\
+We do not **see** the stat_function -- it's associated with the geom_bar(). Count is the default.
+
+```{r}
+library(socviz)
+p <- ggplot(gss_sm, aes(x=bigregion)) 
+p + geom_bar() + 
+	  labs(title = "Figure 4.6: A bar chart.") 
+```
+
+### Figure 4.7: A first go at a bar chart with proportions
+
+Rather than count, let's show proportions.\
+....although this is not quite right -- each sums to 1
+
+```{r}
+p +  geom_bar(aes(y = ..prop..)) + 
+	   labs(title = "Figure 4.7: A first attempt at a bar chart with proportions", 
+	   		  subtitle = "Not quite right -- they are all 1, rather than a proportion summing to 1")
+```
+
+### Figure 4.8: Bar chart with correct proportions
+
+Rather than count, let's show proportions with correct proportions.
+
+```{r}
+p +  geom_bar(aes(y = ..prop.., group=1)) + 
+	   labs(title = "Figure 4.8: A bar chart with correct proportions")
+```
+
+### Figures 4.9: Bar chart -- playing with colors
+
+Look at the frequency of religions from the `gss_sm`\
+First look at data as a table (just a reminder).\
+Create a bar chart with count and color code each factor level with a unique color OUTLINE.\
+NOTE: the instruction is in the origianl mapping = aes().  the instruction is color= to get an outline .
+
+```{r}
+table(gss_sm$religion)
+
+ggplot(gss_sm, aes(x=religion, color = religion)) + 
+   geom_bar() +
+	 labs(title = "Figure 4.9-left: barchart with reference by color outline")
+```
+
+Change color of the full bar (use fill=)
+
+```{r}
+ggplot(gss_sm, aes(x=religion, fill = religion)) + 
+   geom_bar() +
+	 labs(title = "Figure 4.9-right with legend: barchart with reference by fill")
+```
+
+Legend is redundant now, so supress the legend ("guides").\
+NOTE: that guides(fill = FALSE) is in your textbook. FALSE is deprecated. use "non" instead.
+
+```{r}
+ggplot(gss_sm, aes(x=religion, fill = religion)) + 
+   geom_bar() +
+	 labs(title = "Figure 4.9-right: barchart with reference by fill") +
+	 guides(fill = "none")
+```
+
+In general, this is a good chart. The colors are really not necessary, since it is just one variable, and you have the distinctions as factor labels in the x-axis. The colors are not adding any NEW information.
+
+------------------------------------------------------------------------
+
+## Section: 4.5 Frequency plots with two categorical variable
+
+Let's look first at the data in a contingency table -- COUNTS.
+
+```{r}
+table(gss_sm$religion, gss_sm$bigregion)
+```
+
+And the stacked bar cart of religion by bigregion.
+
+```{r}
+ggplot(gss_sm, aes(x=bigregion, fill = religion)) +
+     geom_bar() +
+	   labs(title="Figure 4.10: stacked bar chart of religious preference by census region")
+```
+
+We keep the legend, because it is now useful to communicate information.\
+
+Let's look at the contingency table -- PROPORTIONS.\
+(We choose to look by bigregion, because that's how the charts are created in the textbook -- proportions of religion **within** each bigregion.)
+
+```{r}
+library(summarytools)
+ctable(gss_sm$religion, gss_sm$bigregion, prop = "c")
+```
+
+Let's look at a STACKED BAR chart showing PROPORTIONS.
+
+```{r}
+ggplot(gss_sm, aes(x=bigregion, fill = religion)) +
+     geom_bar(position = "fill") +
+	   labs(subtitle="Figure 4.11: using the fill position adjustment to show relative proportions across categories")
+```
+
+Finally, looked at a DODGED BAR chart showing PROPORTIONS.
+
+```{r}
+ggplot(gss_sm, aes(x=bigregion, fill = religion)) +
+     geom_bar(position = "dodge", aes(y=..prop.., group = religion)) +
+	   labs(subtitle="Figure 4.13: dodged bar chart with proportional bars of relgion with region")
+```
+
+Make sure you can interpret this chart.\
+(e.g., interpret the first tall green bar; the tallest reg bar.)\
+
+------------------------------------------------------------------------
+
+## Section 4.6: Histograms and Density Plots \[Numeric variable(s)\]
+
+In this section, we will use the `midwest` dataset that has information by county for five states in the US Upper Midwest.\
+The `midwest` dataset automatically loads when you load `ggplot2`.\
+Let's look at it quickly.
+
+```{r}
+library(ggplot2)
+str(midwest)
+table(midwest$state)
+```
+
+Here is their location in the US:\
+![Image: Midwest States](midwest_states.png) Each state is subdivided into counties. Here is an example of the county division for Wisconsin:
+
+\
+![Image: Wisconsin Counties](wisconsin_counties.png)
+
+### Histograms
+
+We will look at the `area` variable, which is the size of the county. **(The units are unknown.)**\
+
+**Concept of a Histogram**
+
+-   Shows the distribution of a continuous variable.
+
+-   Displays the frequency of data points within specified ranges (known as bins) of the variable.
+
+-   The x-axis represents intervals (or bins) of the continuous variable.
+
+-   The y-axis represents the frequency (count) or density (count divided by bin width) of data points within each interval.
+
+-   The bars in a histogram touch each other, indicating that the variable on the x-axis is continuous.
+
+### Figure 4.15
+
+First - let's use the default bins. Take note of the Message...
+
+```{r}
+p <- ggplot(midwest, aes(x=area)) 
+p + geom_histogram() +
+	  labs(title = "Figure 4.15-left: Histogram of County Area (default bins")
+```
+
+Let's set the number of bins ourselves manually to 10:
+
+```{r}
+p + geom_histogram(bins = 10) +
+	  labs(title = "Figure 4.15-right: Histogram of County Area (10 bins")
+```
+
+Let's overlay two histograms: - We will use the `percollege` variable instead of area. (Percent College Educated)\
+- Subset the data to keep just Ohio and Wisconsin.\
+- Then compare the two county areas in overlapping histograms.\
+- NOTE: We can subset for just Ohio and Wisconsin right within the data step in ggplot!\
+- alpha refers to transparency -- the higher the value, the more opaque.\
+
+```{r}
+p <- ggplot(data = subset(midwest), 
+						mapping = aes(x=percollege, fill=state))
+
+p + geom_histogram(alpha=.4, bins=20) +
+		labs(title = "Figure 4.16: Comparing two histograms",
+				 subtitle ="Percent College Educated for Counties in Ohio and Wisconsin")
+```
+
+### Density Plots
+
+**Concept of Density Plots**
+
+-   a way to estimate the probability density function of a continuous variable
+
+-   a smoothed version of the histogram
+
+-   instead of showing frequency (like a histogram), it shows a probability density estimate on the y-axis
+
+### Figure 4.17
+All states \
+```{r}
+ggplot(midwest, aes(x=area)) +
+   geom_density() 
+	 labs(title = "Figure 4.17: Kernel density estimate of county areas")
+```
+
+### Figure 4.18
+By state \
+```{r}
+ggplot(midwest, aes(x=area, fill = state, color=state)) +
+  geom_density(alpha=0.3) +
+	labs(title = "Figure 4.18: comparing distributions",
+	  	 subtitle = "Density Plot of county area for 5 Midwestern States")
+```
+Interpret this chart! \
+
+
+
+### Figure 4.19
+Scaled density. Transform the y-axis to scaled density, which is a proportional density estimate.\
+```{r}
+ggplot(subset(midwest, subset = state %in% c("WI","OH")), aes(x=area, fill = state, color=state)) +
+    geom_density(alpha=0.3, mapping = (aes(y = ..scaled..))) +
+		labs(title = "Figure 4.19: Scaled densities",
+	  	   subtitle = "Y-axis is a proportional estimate")
+```
+
+Compare this to the histogram for this -- SEE THE DIFFERENCE?
+```{r}
+ggplot(subset(midwest, subset = state %in% c("WI","OH")), aes(x=area, fill=state)) +
+    geom_histogram(alpha=.4, bins=20) +
+		labs(title = "Figure 4.19: as histogram")
+```
+
+
+---
+
+## Section 4.7: Avoid Transformations When Necessary
+
+### Figure 4.20
+When data is already in a summary like in a table, you don't need to transform.\
+Use the `titanic` table that is in the `socviz` package. NOTE -- it is not the full titanic dataset that we've used before -- it's just a pre-summarized table. \
+```{r}
+library(socviz)
+print(titanic) 
+```
+
+Try to see what happens when we want to create a dodged bar chart with the standard code..\
+```{r}
+#ggplot(titanic, aes(x=fate, y=percent, fill = sex)) +
+#	geom_bar(position = "dodge") +
+#	labs(title="Figure 4.20: Survival on the Titanic by Gender")
+```
+
+You need the `stat="identity"` option to tell `ggplot2` that data are already in the summarized format -- do not do stat transformations **when using geom_bar**.\
+```{r}
+ggplot(titanic, aes(x=fate, y=percent, fill = sex)) +
+  geom_bar(position = "dodge", stat="identity") +
+	labs(title="Figure 4.20: Survival on the Titanic by Gender")
+```
+
+As an alternative, you could use the geom_col() instead. It knows data are already summarized, and you don't need the stat="identity" option.
+```{r}
+ggplot(titanic, aes(x=fate, y=percent, fill = sex)) +
+  geom_col(position = "dodge") +
+	labs(title="Figure 4.20: Survival on the Titanic by Gender- USING geom_col()")
+```
+
+
+### Figure 4.21
+```{r}
+library(socviz)
+p <- ggplot(oecd_sum, aes(x=year, y=diff, fill = hi_lo))
+p + geom_col() + 
+		guides(fill=FALSE) + 
+		labs(x=NULL, y="Difference in Years",
+				 title = "Figure 4.21: Using geom_col() to plot neg and pos values in barchart",
+				 subtitle = "Difference between US and OECD average life expectancies, 1960-2015",
+				 caption = "Data: OECD.  After a chart by Christopher Ingraham, Washington Post, December 27th, 2017.")
+		
+```
+
+#### END

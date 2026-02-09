@@ -1,0 +1,16 @@
+---
+title: "lab 11"
+format: html
+
+---
+
+
+```{r}
+load("LIFEWATER_GIVING_CLEAN_USONLY_20240401.RData")
+load("LIFEWATER_DSRATING_APPEND_20240401.RData")
+load("state_abbrev.RData")
+View(state_abbrev)
+View(dsdata2)
+View(gs5)
+```
+
