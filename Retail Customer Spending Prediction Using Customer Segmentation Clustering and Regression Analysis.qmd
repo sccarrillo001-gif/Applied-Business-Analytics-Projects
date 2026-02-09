@@ -1,0 +1,484 @@
+---
+title: "DAT-3113 PROJECT"
+subtitle: "Final Data Analytics"
+author: "Gabriela Chajon"
+date: "FALL 2023"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: false
+editor: source
+---
+
+```{r}
+load("~/Data analytics/final project data analytics/Customer_Retail_High_Wine (1).RData")
+options(scipen = 999, digits = 10)
+```
+
+##  INTRODUCTION
+As a Sr. Marketing Analyst for a grocery chain in Brazil, the goal is to report costumer profiles and attributes that predict total spending over a 2 year period with the grocer, across 3 channels, brick and mortar stores, online, and via a catalog. Additionally, the client,the Chief Marketing Officer, is interested in understanding if the predictive attributes vary for high- vs low-wine purchasers.
+
+## PART A:  DATASET
+```{r}
+dim(highwine)
+```
+The dataset has 1137 observations and 27 variable and shows information about costumer's demographics, purchasing behaviors and responses to marketing companies. More specifically it includes unique costumer identifiers, financial and household aspects. The dataset also outlines whether customers made purchases in specific product categories and their spending habits. 
+
+## PART B:  DATA WRANGLING, MUNGING, AND PREPARATION
+
+This is the section for all of the data transformation and prep.
+
+### Transforming variables to factors
+```{r}
+highwine1 <- highwine
+highwine1$Fruit <- as.factor(highwine1$Fruit)
+highwine1$Meat <- as.factor(highwine1$Meat)
+highwine1$Sweet <- as.factor(highwine1$Sweet)
+highwine1$Gold <- as.factor(highwine1$Gold)
+highwine1$Fish <- as.factor(highwine1$Fish)
+highwine1$AcceptedCmp1 <- as.factor(highwine1$AcceptedCmp1)
+highwine1$AcceptedCmp2 <- as.factor(highwine1$AcceptedCmp2)
+highwine1$AcceptedCmp3 <- as.factor(highwine1$AcceptedCmp3)
+highwine1$AcceptedCmp4 <- as.factor(highwine1$AcceptedCmp4)
+highwine1$AcceptedCmp5 <- as.factor(highwine1$AcceptedCmp5)
+```
+```{r}
+library(DataExplorer)
+plot_missing(highwine)
+```
+
+### Missing values
+```{r}
+summary(is.na(highwine))
+sum(!complete.cases(highwine))
+
+highwine1 <- (na.omit(highwine))
+sum(!complete.cases(highwine1))
+```
+The data shows 10 missing values all of them in the income column which represents the 0.88% of the total dataset. Since the number is very low, the command deleted the missing values and created a new dataset called highwine1. 
+
+### Birthyear to age
+```{r}
+library(lubridate)
+library(knitr)
+current_year <- 2023
+highwine1$Age <- current_year - highwine1$Year_Birth
+age_table <- table(highwine1$Age)
+kable(data.frame(Age = names(age_table), Count = as.vector(age_table)),
+      caption = "Distribution of Ages in highwine1",
+      col.names = c("Age", "Count"),
+      align = c("c", "c"))
+```
+
+### Divide marital status into married or not
+```{r}
+highwine1$Marital_Status1 <- ifelse(highwine1$Marital_Status == "Married", "Married", "Not Married")
+table(highwine1$Marital_Status1)
+highwine1$Marital_Status1 <- as.factor(highwine1$Marital_Status1)
+```
+### Divide Education 
+```{r}
+library(dplyr)
+highwine1 <- highwine1 %>%
+  mutate(Education = case_when(
+    Education %in% c("Master", "2n Cycle") ~ "Master",
+    TRUE ~ as.character(Education)  # Keep other values unchanged
+  ))
+```
+
+### Joining kids and teens into children column
+```{r}
+highwine1$ChildrenHome <- (highwine1$Kidhome + highwine1$Teenhome)
+```
+
+### Finding outliers in each variable
+```{r}
+boxplot(highwine1$Age)$out
+boxplot(highwine1$Recency)$out
+boxplot(highwine1$Income)$out
+boxplot(highwine1$NumDealsPurchases)$out
+boxplot(highwine1$NumWebPurchases)$out
+boxplot(highwine1$NumCatalogPurchases)$out
+boxplot(highwine1$NumStorePurchases)$out
+boxplot(highwine1$NumWebVisitsMonth)$out
+boxplot(highwine1$Total_Spend)$out
+boxplot(highwine1$tenure)$out
+```
+# Deleting Outliers from Age 
+
+```{r}
+outliers <- boxplot(highwine1$Age)$out
+highwine1 <- highwine1[!highwine1$Age %in% outliers, ]
+boxplot(highwine1$Age)
+```
+The outlier was clearly a data entry error so it was necessary to delete it.
+
+### New LogSpending column
+```{r}
+highwine1$LogSpending <- log(highwine1$Total_Spend)
+summary(highwine1$LogSpending)
+```
+This help me see that the majority of the data falls within the range of the 1st quartile and 3rd quartile.
+
+```{r}
+highwine1$NumberOfPurchases <- (highwine1$NumWebPurchases + highwine1$NumCatalogPurchases + highwine1$NumStorePurchases)
+head(highwine1$NumberOfPurchases)
+sum(highwine1$NumberOfPurchases)
+```
+I made a new variable named Age that calculates the age of the customers based off of the Year_Birth variable. 
+I created a new variable called Marital_status1 which groups the categories into Married and Not married.
+I made a new variable called NumberOfPurchases which includes the total number of purchases including Web, Catalog and stores purchases.
+I also got the log of the total "Total_Spend" column and "Income" column and created a new column with the results.
+I sorted the z-values of the total spending to find any outliers in the column. I consider that there may be other variables where it would be also useful to find outliers.
+After all those changes the dataset highwine1 has 1126 observations with 32 variables.\
+
+## PART C:  SUMMARY MEASURES AND DATA VISUALIZATION
+
+# Summary Measures
+For ratio and interval data, include the complete set of summary measures, including skewness and kurtosis.\
+Use tables and other methods to show categorical variables.\
+```{r}
+library(psych)
+describe(highwine1)
+```
+On average participants spent $1066.43 and have an income of 66726.69. The average age of participants is 56.45. The skewness and kurtosis values for income indicate a slightly negatively skewed distribution which suggests that majority of people have incomes below the average. 
+
+### Type of products visualization
+```{r}
+cat("Fruit", table(highwine1$Fruit))
+cat("  Meat", table(highwine1$Meat))
+cat("  Sweet", table(highwine1$Sweet))
+cat("  Gold", table(highwine1$Gold))
+cat("  Fish", table(highwine1$Fish))
+
+library(dplyr)
+highwine1 <- mutate(highwine1, BoughtAllCategories = Fruit & Meat & Sweet & Gold & Fish)
+num_customers_bought_all_categories <- sum(highwine1$BoughtAllCategories)
+cat("  All five categories:", num_customers_bought_all_categories, "\n")
+```
+993 costumers bought fruit at least once in the last 2 years, all 1126 costumers bought meat, 972 bought sweets, 1103 bought from the gold promo category and 999 bought fish. 823 costumers bought from all categories. 
+
+### Scatterplots for all categories
+```{r}
+library(DataExplorer)
+plot_scatterplot(highwine1, by="Total_Spend")
+```
+
+# Correlation matrix
+```{r}
+numeric_variables <- sapply(highwine1, is.numeric)
+numeric_variables
+
+selected_vars <- c("Income", "Total_Spend", "NumberOfPurchases", "Age", "Recency", "NumWebVisitsMonth", "tenure")
+cov_matrix <- cov(highwine1[, selected_vars])
+cov_matrix
+
+selected_vars <- c("Income", "Total_Spend", "NumberOfPurchases", "Age", "Recency", "NumWebVisitsMonth", "tenure")
+cor_matrix <- cor(highwine1[, selected_vars])
+cor_matrix
+
+library(corrplot)
+corrplot(cor_matrix, method = "number", type = "lower")
+```
+
+The correlation coefficient between Income and Total Spend is 0.72 which indicates a strong positive relationship affirming that when income increases, total spend does too. Besides that, the correlation coefficient between NumberWebVisitMonths and Total Spend is -0.40 which describes a moderate negative relationship affirming that when income increases, total spend decreases\
+
+
+### Data Visualization
+Include **at minimum** the following:
+-a contingency table with two categoricals\
+-a stacked bar chart and a dodged bar chart for two categoricals\
+-a scatterplot of two numerics with one categorical\
+-one additional type of complex "other" chart from Chapter 4\
+```{r}
+library(summarytools)
+ctable(highwine1$Education, highwine1$Marital_Status1, prop="r")
+ctable(highwine1$Education, highwine1$Marital_Status1, prop="c")
+ctable(highwine1$Education, highwine1$Marital_Status1, prop="t")
+```
+The proportion of Married people in my dataset is 61.6% in comparison with 38.42% of not-married people. The contingency table also suggests that a higher proportion of individuals with a graduation education level are not married. Most of the costumer base are college graduates or have a higher education level 
+
+```{r}
+library(DataExplorer)
+plot_histogram(
+  highwine1,
+  binary_as_factor = TRUE,
+  geom_histogram_args = list(bins = 30L),
+  scale_x = "continuous",
+  title = NULL,
+  theme_config = list(),
+  nrow = 4L,
+  ncol = 4L,
+  parallel = FALSE
+)
+```
+With this group of histograms it is easier to visualize that the majority of costumers made just 1 purchase with a discount,5 purchases online and 2 purchases in the catalog
+Most customers have an income between the range of 6000 and 8000 and are between the ages of 40 and 60. Also, there are more costumers with teens than with kids as we saw before with the means of 0.38 and 0.55 respectively. 
+
+### Stacked barchart 
+```{r}
+library(ggplot2)
+ps <- ggplot(data=highwine1, mapping=aes(x=Education, fill=Marital_Status1)) + 
+	    geom_bar(position = "stack")
+ps
+```
+### Dodged barchart
+```{r}
+library(ggplot2)
+ps <- ggplot(data=highwine1, mapping=aes(x=Marital_Status1, fill=Education)) + 
+	    geom_bar(position = "dodge")
+ps
+```
+Most participants are graduated and not married while the least amount of costumers with zero observations are not married people with Basic education. 
+
+### Scatter plots with 2 numerics and 1 categorical
+```{r}
+library(ggplot2) 
+plot <- ggplot(data=highwine1, aes(x=Age, y=Total_Spend, color=Education)) 
+plot + geom_point()
+```
+There is no linear relationship between Age and Total Spend
+
+```{r}
+library(ggplot2) 
+plot <- ggplot(data=highwine1, aes(x=Income, y=Total_Spend, color=Marital_Status1)) 
+plot + geom_point()
+```
+There is a linear relationship between Income and Total Spend
+
+### Bubble plot (Additional complex chart)
+```{r}
+symbols(highwine1$Total_Spend~highwine1$Income,
+circles = highwine1$Recency, inches = 0.1, bg="blue", main = "A bubble plot of Income, Age, and Total Spend", xlab = "Total Spend", ylab = "Income")
+```
+
+## PART D:  ANALYTIC MODELS
+
+### Clustering
+K-means clustering will be used to segment customers based on similar characteristics: purchasing behavior(Total of Purchases made) and demographics(Age, Income). An elbow plot will be created before to help identify the optimal number of clusters (k-value).
+
+```{r}
+library(factoextra)
+library(cluster)
+library(dplyr)
+```
+
+```{r}
+clustering_data <- highwine1[, c("Income", "Age", "Total_Spend")]
+
+scaled_data <- scale(clustering_data)
+
+fviz_nbclust(scaled_data, kmeans, method = "wss")
+```
+```{r}
+set.seed(1)
+km <- kmeans(scaled_data, 3)
+
+km$size
+km$centers
+```
+```{r}
+plot(as.data.frame(scaled_data), col=km$cluster)
+points(km$centers, col=1:3, pch=8, cex=2)
+```
+
+
+```{r}
+factoextra::fviz_cluster(km, data = scaled_data)
+```
+```{r}
+library(GGally)
+centroids <- data.frame(km$centers)
+centroids['Cluster'] = paste('Cluster', seq(1, 3))  
+
+p <- ggparcoord(centroids, columns = 1:3,  
+                groupColumn = 'Cluster',   
+                showPoints = TRUE) +
+     scale_color_discrete() + 
+     labs(x = 'Variable', y = 'Value')
+p + geom_line(size = 1.5)
+
+```
+```{r}
+all <- cbind(cluster=km$cluster, highwine1) 
+pip <- all %>% 
+	     group_by(cluster) %>% 
+	     summarize(N=n(), 
+	     					 xIncome = mean(Income),
+	     					 xAge      = mean(Age),
+	     					 xTotalSpend  = mean(Total_Spend))
+pip
+```
+The bigger cluster is the first one with size 382 and centers in 0.4902508728 -0.9532921164 and     0.433947335. It has 5 observations more than cluster 2 and 15 observations more than cluster 3.\
+
+```{r}
+cluster1 <- filter(all, cluster==1)
+cluster2 <- filter(all, cluster==2)
+cluster3 <- filter(all, cluster==3)
+
+knitr::kable(cluster1)
+knitr::kable(cluster2)
+knitr::kable(cluster3)
+
+```
+
+### More clustering analysis
+```{r}
+marital_status_column <- "Marital_Status1"
+
+marital_status_proportions <- prop.table(table(all$cluster, all[[marital_status_column]]), margin = 1)
+
+print(marital_status_proportions)
+
+```
+
+```{r}
+average_kids_by_cluster <- tapply(all[["ChildrenHome"]], all$cluster, mean)
+
+print(average_kids_by_cluster)
+
+```
+
+### Description of each cluster
+Cluster 1: Young -rich buyers
+Customers in this cluster have the highest income and highest total spend but they are also the youngest group of customers. Most of customers belong to this cluster. This data refers to a group of young adults with job success as we noticed most are college graduates. In this cluster there is the people with the lowest mean of children and the highest mean of married people
+
+Cluster 2: Budget-Friendly adults
+Customers from cluster 2 are the oldest. While their income and spending are not the highest, they are in the middle range. The age of this group suggest that represent people in the later stages of their careers. Customers of these group represent the least amount of married people. 
+
+Cluster 3: Financially-smart buyers
+Third cluster include customers with the lowest income and total spend while their age are the middle range. The combination of lower income and spending could be reflective of a approach to spending that is more conscious than others or budget-friendly.This cluster has the highest average of children with can be related to their intelligent spending habits.
+
+
+#### 3. Regression
+A linear regression model will be performed to assess the statistical significance of Age, Income, and Number of Purchases. \
+
+```{r}
+model <- lm(Total_Spend ~ Age + Income + NumberOfPurchases, data = highwine1)
+summary(model)
+```
+### Comments 
+An R-squared of 0.5526596 indicates that approximately 55.27% of the variability in Total_Spend is explained by the model. This analysis suggests that Age, Income, and NumberOfPurchases are significant predictors of Total_Spend, and the model as a whole is a good fit for the data. The negative coefficient for Age indicates a negative relationship, while the positive coefficients for Income and NumberOfPurchases indicate positive relationships with Total_Spend
+
+### Plot of residuals   
+```{r}
+plot(x=fitted(model), y=resid(model), 
+		 pch=15,            
+		 ylim=c(-200, 200),  
+		 main="Plot of Residuals and Fitted Values for Total Spend Model")
+abline(0,0) 
+```
+
+The scatter of points on the plot appear random and lack any pattern along the horizontal axis. This randomness suggests that the association between the independent variables and the dependent variable follows a linear relationship.
+
+```{r}
+library(DataExplorer) 
+plot_correlation(highwine1, type = "continuous")  
+library(car) 
+vif(model)
+```
+By examining the correlation plot, we can quickly identify which pairs of continuous variables have notable relationships. For example, we can notice that from the type of purchase the Catalog purchases are the ones with stronger correlation with income or how the complain variable is not related to any other variables. 
+
+```{r}
+plot(x=highwine1$Income, y=resid(model),  	
+		 pch=17,
+		 main="Plot of Residuals and Actual Value Recency") 
+
+plot(x=highwine1$Age, y=resid(model),  	
+		 pch=17,
+		 main="Plot of Residuals and Actual Value Frequency")
+
+plot(x=highwine1$NumberOfPurchases, y=resid(model),  	
+		 pch=17,
+		 main="Plot of Residuals and Actual Value Sum Purchases")
+```
+The negative relationship in the Plot of Residuals and Actual Value Recency could suggest that there might be other predictor variables or nonlinear relationships that the current model is not capturing.
+
+###
+```{r}
+qqnorm(resid(model))
+qqline(resid(model))
+```
+Since the points on the plot closely follow the reference line, it suggests that the residuals are approximately normally distributed
+
+
+## PART E:  ETHICAL IMPLICATIONS
+This report has been presented  to inform the client of all data science results and material facts known to me after analyzing the collection of the data. All ethical implications are guided by the Data Science Code of Conduct. 
+
+# Rule 1
+Rule 1 indicates that certain definitions should be defined for the the client to have a better understanding of the material presented in the report. 
+Regarding the term "Statistically Significant" we would clarify to the client that certain variables possess statistical significance in predicting overall customer spending
+We would define it as:
+(p) "Statistically Significant" means a statistical assessment of whether observations reflect a pattern rather than just chance and may or may not be meaningful.
+
+Similarly, for the term "Correlation", we would say to the client that when we assert certain variables are correlated, we are demonstrating the extent to which each variable influences another.
+We would define it as:
+(q) "Correlation" means any of a broad class of statistical relationships involving dependence.
+A positive correlation would mean that when a variable increases the other one that is dependent to that one, would increase. A negative correlation explains the opposite.
+
+
+# Rule 5
+The key ethical concerns revolve around how we handle private information linked to customer profiles and their spending predictions. Keeping data confidential is a top priority and includes also non-public details about the client, its partners, staff, and customers, all of whom anticipate their information to be kept confidential.
+Following rule 5, information about this report will not be revealed, copied or discussed with others unless the client gives informed consent or in cases disclosure will prevent reasonably certain death, substantial bodily harm or a crime or fraud. 
+
+# Rule 8
+ The ethical implications lie in the responsibility to provide accurate and transparent data science results to my client.
+As the rule 8 states if the client is misusing data science to communicate a false conclusions of customers or promote some predictions of spending that the report cannot support , I am committed to taking reasonable remedial measures. This includes disclosing my concerns to the client and, if necessary, disclosing the issue to the proper authorities. 
+
+## CONCLUSIONS
+I deleted 10 missing values and 1 outlier from age. 
+The correlation coefficient between Income and Total Spend is 0.72 which indicates a strong positive relationship. The correlation coefficient between Number of Website visits and Total Spend is -0.40 which describes a moderate negative relationship.
+The proportion of not-married people in my dataset is 61.6% in comparison with 38.42% of married people. 
+Most customers have an income between the range of 60000 and 80000 and are between the ages of 40 and 60. 
+On average participants spent $1066.43 and have an income of 66726.69. The average age of participants is 56.45. Majority of people have incomes below 66726.69
+Customers' preferences for products, ranked from the most purchased to the least, are as follows: meat, items from the gold promotion category, fish, fruit, and sweets.
+Most participants are graduated and not married. Regarding the cluster findings
+Cluster 1,  stands out for comprising the youngest customers with the highest income and total spend. In contrast, Cluster 2, represents an older demographic in the later stages of their careers, demonstrating moderate income and spending levels.  Lastly, Cluster 3, named "Financially-smart buyers," consists of customers with the lowest income and total spend. 
+
+
+## REFERENCES
+```{r, echo=FALSE}
+one <- print(citation(), style = "textVersion")  # this is the citation for R
+cite.version <- R.Version()
+pip <- as.character(cite.version$version.string)
+cat("Version", pip, "\n")
+cat("  \n")
+
+print(citation("ggplot2"), style = "textVersion")
+cat("  \n")
+print(citation("GGally"), style = "textVersion")
+cat("  \n")
+print(citation("factoextra"), style = "textVersion")
+cat("  \n")
+print(citation("cluster"), style = "textVersion")
+cat("  \n")
+print(citation("dplyr"), style = "textVersion")
+cat("  \n")
+print(citation("DataExplorer"), style = "textVersion")
+cat("  \n")
+print(citation("lubridate"), style = "textVersion")
+cat("  \n")
+print(citation("psych"), style = "textVersion")
+cat("  \n")
+print(citation("corrplot"), style = "textVersion")
+cat("  \n")
+print(citation("summarytools"), style = "textVersion")
+cat("  \n")
+print(citation("car"), style = "textVersion")
+cat("  \n")
+
+```
+
+OpenAI. (2023). ChatGPT (June 26 version) [Large language model]. https://chat.openai.com/chat
+
+
+## END
+
+
+
+
+
