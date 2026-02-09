@@ -1,0 +1,295 @@
+---
+title: "DAT-4313 - Data Viz in Model Development"
+subtitle: "NBA Example"
+author: "Gabriela CHajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute: 
+  warning: false
+  messages: false
+  echo: true
+toc: false
+toc-location: left  
+---
+
+# FURTHER INSTRUCTIONS
+
+Use the dataset assigned to you in the LAB Instructions.
+
+Use the *depvar* indicated for your dataset.
+
+Select 5-8 independent variables from your dataset as predictors, and estimate a linear regression model.
+
+-   Note that not all variables in your dataset make sense as predictors. For example, categorical variables with many levels or all components of a derived variable are unreasonable.
+
+-   Work through the EDA to identified good candidates. Your model should be linear in the parameters. Consider alternative functional forms for your depvar or continuous variables.
+
+Include interpretations and comments after each chunk.
+
+Conclude with a final assessment of the model and a reflection of the value of data visualization to aid model development.\
+
+---
+
+# Example Code for FIFA with depvar=Wage
+
+## DATA
+
+```{r}
+options(scipen=999)
+library(socviz) # use for the round_df() function
+load("LAB_6.RData")
+library(psych)
+
+describe(LAB_6)
+colnames(LAB_6)
+str(LAB_6)
+```
+
+### Partition 60% Train / 40% Test
+
+```{r}
+library(caret)
+set.seed(1)
+index <- createDataPartition(LAB_6$GP, p=0.6, list=FALSE)
+train <- LAB_6[index,]
+test  <- LAB_6[-index,]
+```
+
+Training set number of observations: 319\
+Test dataset number of observations: 211\
+
+---
+
+## EDA
+
+### Descriptive Statistics
+
+```{r}
+library(psych)
+library(tidyverse)
+library(flextable)
+psych::describe(train, fast=TRUE)  # (class note --> remove flextable)
+```
+
+### Boxplots -- All Numeric
+
+```{r}
+data_long <- train %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+ggplot(data_long, aes(x = Variable, y = Value)) +
+  geom_boxplot() +
+  coord_flip() + 
+  facet_wrap(~ Variable, scales = "free", ncol=3) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank()) + 
+  labs(title = "Horizontal Boxplot for Each Numeric Variable")
+```
+
+
+
+```{r}
+library(DataExplorer)
+plot_boxplot(train, by="AGE") 
+```
+
+### Histograms
+
+```{r}
+plot_histogram(train)
+```
+
+### Scatterplots (depvar \~ all x)
+
+Look at the shape of the relationship between the dependent variable and all of the continuous potential independent variables.
+
+```{r}
+plot_scatterplot(test, by="GP")
+```
+
+### Correlation Matrix
+
+```{r}
+plot_correlation(train, type="continuous")
+```
+Variables with stronger correlation are FGM AND W which can make us infer that will be more significant in the model. The plot help us see that some variables are correlated between them like FTM and FTA and also FGM and PTS
+
+---
+
+## MODEL
+
+### Linear Regression Model
+
+From the above EDA, we chose the following variables to start. Note that, given the shape of the relationship between Wage and Age, we entered Age as a quadratic.\
+From experience and prior research, it is common to specify a dependent variable that is a currency variable (e.g., sales, revenue, wages) in log form.\
+
+Estimate the following model:\
+$log(gp) = Age + Age^2 + Potential + International.Reputation + Value.n + Special + Height + RightFoot + Skill.Moves$
+$log(gp)= PTS + FGM + FGA + FTM + FTA$
+
+
+
+### Estimate Coefficients and show coefficients table
+
+```{r}
+model <- lm(log(GP) ~ PTS + W + MIN + FGM + AGE, data=train)
+model %>% as_flextable
+```
+Among the factors considered, both "W" (wins) and "MIN" (minutes played) significantly influence the number of games played. For instance, for every additional win, the expected increase in games played is about 0.030, and for each extra minute played, there's a rise in games played. On the other hand, indicators like "PTS" (points), "FGM" (field goals made), and "AGE" (age) show that were not statistically significant.
+The model shows a good ability to explain the variation in games played, with an adjusted R-squared value of 0.644, meaning that about 64.4% of the variability in games played can be understood by the predictors. Moreover, the low p-value of 0.0000 for the F-statistic (116.1) indicates that the overall model is highly statistically significant.
+
+### Coefficient Magnitude Plot
+
+```{r}
+# note this simple code using coefplot package produces chart like Figure 6.6 in one short line. 
+library(coefplot)
+coefplot(model, soft="magnitude", intercept=FALSE)
+```
+The chart helps visualize  the 3 predictors that were not statistically significant because they are the ones that has the line that pass on zero, it means that the predictor variable does not have a significant impact on the outcome variable in the model.
+
+### Check for predictor independence
+
+Using Variance Inflation Factors (VIF)
+
+```{r}
+library(car)
+vif(model)
+```
+Since a VIF value greater than 10 indicates a high degree of multicollinearity.
+"PTS" and "FGM" have VIF values exceeding 10, indicating potential multicollinearity issues which mean that these variables are highly correlated with other predictor variables in the model, which can affect the reliability of coefficient estimates. However, the model was made with those predictors because they were the ones that helped the model to explain the variablity more. 
+
+### Residual Analysis
+
+#### Residual Range
+
+```{r}
+quantile(round(residuals(model, type = "deviance"),2))
+```
+
+#### Residual Plots
+
+We are looking for: - Random distribution of residuals vs fitted values - Normally distributed residuals : Normal Q-Q plot with values along line - Homoskedasticity with a Scale-Location line that is horizontal and no residual pattern - Minimal influential obs - that is, those outside the borders of Cook's distance
+
+```{r}
+plot(model)
+```
+Since the points closely follow the line, it can indicate that the model is performing well, and there are no apparent issues with heteroscedasticity or non-linearity. If the points in the Normal Q-Q plot deviate from the diagonal line, it suggests that the distribution of residuals does not perfectly follow a normal distribution.
+
+**Plot Fitted Value by Actual Value**
+
+```{r}
+library(broom)
+train2 <- augment(model, data=train)  # this appends predicted to original dataset to build plots on your own
+
+p <- ggplot(train2, mapping = aes(y=.fitted, x=GP))
+p  + geom_point()
+```
+The model's predictions can mean they are accurate, and there is a strong linear relationship between the predicted and actual values.
+
+**Plot Residuals by Fitted Values**
+
+```{r}
+p <- ggplot(train2, mapping = aes(y=.resid, x=.fitted))
+p  + geom_point()
+```
+Since the points are not randomly distributed it can indicate heteroscedasticity
+### Performance Evaluation
+
+#### Use Model to Score `test` dataset (Display First 10 values - depvar and fitted values only)
+
+```{r}
+library(dplyr)
+pred <- predict(model, newdata = test, interval="predict")  #score test dataset wtih model
+test_w_predict <- cbind(test, pred)  # append score to original test dataset
+
+test_w_predict %>%
+  head(10) %>%
+	select(PLAYER, GP, fit, lwr,upr) %>% 
+  as_flextable(show_coltype = FALSE) 
+```
+The model predicts the number 
+
+#### Plot Actual vs Fitted (`test`)
+
+```{r}
+plot(test_w_predict$GP, test_w_predict$fit, pch=16, cex=1)
+```
+
+#### Performance Metrics
+
+```{r}
+library(Metrics)
+metric_label <- c("MAE","RMSE", "MAPE")
+metrics <- c(round(mae(test_w_predict$GP, test_w_predict$fit),4),
+						 round(rmse(test_w_predict$GP, test_w_predict$fit),4),
+						 round(mape(test_w_predict$GP, test_w_predict$fit),4))
+pmtable <- data.frame(Metric=metric_label, Value = metrics)
+flextable(pmtable)
+```
+
+### Model Fit by Continent
+
+```{r}
+# more in depth plots of performance 
+p <- ggplot(data = subset(test_w_predict, TEAM %in% c("LAC", "GSW")),
+            aes(x = GP,
+                y = fit, ymin = lwr, ymax = upr,
+                color = TEAM,
+                fill = TEAM,
+                group = TEAM))
+p +  geom_point(alpha = 0.5) + 
+	   geom_line() + geom_ribbon(alpha = 0.2, color = FALSE) +
+	   labs(title="Actual vs Fitted with Upper and Lower CI",
+	   		  subtitle="Golden State Warriors and Los Angeles Clippers",
+	   		  caption="NBA{datasetsICR}") +
+	   xlab(NULL) + ylab("fitted") +
+	   theme(legend.position = "bottom")
+	
+```
+Since both lines in the plot (representing the teams Golden State Warriors and Los Angeles Clippers) are ascending or going up, it suggests a positive relationship between the number of games played ("GP") and the fitted values generated by the model.
+
+## `ggplot2` explore (Intro Section)
+
+This is just replication of the first section within Chapter 6 (as FYI)\
+
+```{r}
+pip <- lm(log(GP) ~ W, data=train)
+summary(pip)
+
+# knitr does not like autoplot
+#autoplot(lm(log(Wage.n) ~ Potential, data=train), data=train, colour = 'Nationality_Continent')
+
+
+library(ggplot2)
+p <- ggplot(data=train, mapping=aes(y=log(GP), x=W))
+
+p +  geom_point(alpha = 0.2) + 
+	   geom_smooth(method = "lm", aes(color = "OLS", fill = "OLS"))
+
+p + geom_point(alpha=0.1) +
+    geom_smooth(color = "beige", fill="beige", method = MASS::rlm) +
+    geom_smooth(color = "darkmagenta", fill="darkmagenta", method = "lm")
+
+p + geom_point(alpha=0.1) +
+    geom_smooth(color = "beige", method = "lm", linewidth = 1.2, 
+                formula = y ~ splines::bs(x, 3), se = FALSE)
+
+p + geom_point(alpha=0.1) +
+    geom_quantile(color = "beige", size = 1.2, method = "rqss",
+                  lambda = 1, quantiles = c(0.20, 0.5, 0.85))
+```
+Overall, the model suggests that the number of wins (W) has a statistically significant effect on the natural logarithm of the number of games played (log(GP)), with a substantial proportion of the variability in log(GP) explained by W.
+
+
+---
+
+## SUMMARY ASSESSMENT AND EVALUATION OF THE MODEL
+The model is overall a good fit. Only 2 variables had a strong correlation with another.Wins and MIN. 
+The results show that as a team wins more games, they tend to play more games overall. For every additional win, the number of games played goes up by about 0.047 on average. The model we used to figure this out seems to do a good job, explaining about 59.1% of why teams play the number of games they do. 
+After verifying our model's performance, we concluded that it is acceptable but not excellent. The scattering of residual numbers indicates a good fit for our model. Nonetheless, certain errors were detected in our performance evaluations. It has been quite beneficial to utilize visual graphs since they help to make the data understandable and identify any flaws that require correction.
+
+
+## END
