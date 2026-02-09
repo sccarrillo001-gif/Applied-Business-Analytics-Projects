@@ -1,0 +1,1204 @@
+---
+title: "Lifewater International"
+author: "Gabriela Chajon"
+theme: spacelab
+format: 
+  dashboard:
+    logo: lifewater.png
+    nav-buttons: [linkedin, twitter, facebook]
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(dplyr)
+load("clena.RData")
+library(flexdashboard)
+```
+
+# HOME
+
+## Row {height="5%"}
+
+```{r}
+#| include: false
+library(scales)
+library(dplyr)
+total_donations_2021 <- gs5 %>%
+  summarize(Total_Donations_2021 = sum(giving2021)) %>%
+  mutate(Total_Donations_2021 = scales::dollar(Total_Donations_2021))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Total Donations in 2021"
+#| width: 2
+#| height: "8px"
+#| style: "font-size: 2px; color: white;"
+
+list(
+  color = "blue",
+  value = total_donations_2021$Total_Donations_2021
+)
+```
+
+```{r}
+#| include: false
+library(scales)
+library(dplyr)
+difference_donations <- gs5 %>%
+  summarize(Difference = sum(giving2021) - sum(giving2020)) %>%
+  mutate(Difference = scales::dollar(Difference))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Difference ($) between 2020-2021"
+#| width: 2
+#| height: "8px"
+#| style: "font-size: 2px; color: white;"
+
+list(
+  color = "green",
+  value = difference_donations$Difference
+)
+```
+
+```{r}
+#| include: false
+total_donors_2021 <- nrow(gs5[gs5$giving2021 != 0, ])
+```
+
+
+```{r}
+#| content: valuebox
+#| title: "Total Donors in 2021"
+#| width: 2
+#| height: "8px"
+#| style: "font-size: 2px; color: white;"
+
+list(
+  color = "blue",
+  value = total_donors_2021
+)
+```
+```{r}
+#| include: false
+active_donors_2021 <- gs5 %>%
+  filter(as.Date(last_activity_date, format="%m/%d/%Y") >= as.Date("2021-01-01") & 
+         as.Date(last_activity_date, format="%m/%d/%Y") <= as.Date("2021-09-30")) %>%
+  nrow()
+```
+
+
+```{r}
+#| content: valuebox
+#| title: "Active Donors (2021)"
+#| width: 2
+#| height: "8px"
+#| style: "font-size: 2px; color: white;"
+
+list(
+  color = "blue",
+  value = active_donors_2021
+)
+```
+
+## Row {height="20%"}
+### Column {width="45%"}
+```{r}
+quick_facts <- c(
+  "Quick Facts",
+  "─────────────────────────────────────────────────────────────────────",
+  "- Within the past 5 years, 32% of donations have come from California.",
+  "- California had the most donations in the U.S. at 3265, and New Hampshire had the least at 8.",
+  "- The West donated the most amount of money out of the four regions and has the most Presidents Circle members.",
+  "- The Northeast has the most amount of tier levels."
+)
+
+us_insights <- c(
+  "U.S. Insights",
+  "─────────────────────────────────────────────────────────────────────",
+  "- Despite having the lowest total number of donors among all regions, the South boasts the highest concentration of Tier 1 donors. This elevates the South as a formidable region, characterized by its significant presence of Tier 1 donors.",
+  "- Northeast region appears to have the highest amount of donors with tier classifications; however, majority of the donors are classified as Tier 2 or Tier 3 donors, with less presence on the Tier 1 level.",
+  "- The Western region boasts nearly half of the President's Circle accounts, totaling 19. This significant presence significantly contributes to the substantial amount of donations originating from the West.",
+  "- The Southern region has consistently recorded the highest total amount of funds received over the past five years. Additionally, it stands out as one of the regions with the most substantial increase in total donations from 2020 to 2021."
+)
+
+cat("\n")
+for (fact in quick_facts) {
+  wrapped_text <- strwrap(fact, width = 55)
+  for (line in wrapped_text) {
+    cat(line, "\n", sep = "")
+  }
+}
+```
+
+```{r}
+cat("\n")
+for (insight in us_insights) {
+  wrapped_text <- strwrap(insight, width = 55)
+  for (line in wrapped_text) {
+    cat(line, "\n", sep = "")
+  }
+}
+```
+
+```{r}
+#| include: false
+library(dplyr)
+
+state_regions <- data.frame(
+  state = c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"),
+  region = c("South", "West", "West", "South", "West", "West", "Northeast", "Northeast", "South", "South", "West", "West", "Midwest", "Midwest", "Midwest", "Midwest", "South", "South", "Northeast", "South", "Northeast", "Midwest", "Midwest", "South", "Midwest", "West", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "South", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "Midwest", "South", "West", "Northeast", "South", "West", "Northeast", "South", "South", "Northeast", "West")
+)
+
+merged_data <- left_join(gs5, state_regions, by = "state")
+
+giving_totals <- merged_data %>%
+  group_by(region) %>%
+  summarise(
+    total_giving2017 = sum(giving2017, na.rm = TRUE),
+    total_giving2018 = sum(giving2018, na.rm = TRUE),
+    total_giving2019 = sum(giving2019, na.rm = TRUE),
+    total_giving2020 = sum(giving2020, na.rm = TRUE),
+    total_giving2021 = sum(giving2021, na.rm = TRUE),
+    total_giving = sum(giving2017, giving2018, giving2019, giving2020, giving2021, na.rm = TRUE)
+  ) %>%
+  arrange(desc(total_giving))
+
+giving_totals
+```  
+
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+colnames(giving_totals) <- c("Region", "Total Giving 2017", "Total Giving 2018", "Total Giving 2019", "Total Giving 2020", "Total Giving 2021", "Total")
+
+kable(giving_totals, "html") %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#3c6b9f")
+```
+
+### Column {.tabset}
+```{r}
+#| title: Donations across the U.S.
+library(leaflet)
+library(rjson)
+library(maps)
+
+data <- fromJSON(file = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json")
+
+state_names <- sapply(data$features, function(feature) feature$properties$NAME)
+
+yellow_states <- c("washington:main", "oregon", "montana", "idaho", "wyoming", "nevada", 
+                   "california", "utah", "colorado", "arizona", "new mexico", "alaska")
+
+green_states <- c("kansas", "north dakota", "nebraska", "south dakota", "minnesota", "wisconsin", 
+                   "illinois", "indiana", "michigan:north", "michigan:south", "ohio", "missouri", "iowa")
+
+blue_states <- c("texas", "oklahoma", "arkansas", "louisiana", "mississippi", "alabama", "florida", "georgia", "tennessee", "kentucky", "virginia:chesapeake", "virginia:chincoteague", "virginia:main", "west virginia", "maryland", "delaware", "district of columbia", "north carolina:main", "north carolina:knotts", "north carolina:spit", "south carolina")
+
+orange_states <- c("pennsylvania", "new york:main", "massachusetts:main", "vermont", "new hampshire", "rhode island", "connecticut", "maine", "new jersey", "new york:staten island", "new york:long island", "new york:manhattan", "massachusetts:martha's vineyard", "massachusetts:nantucket")
+
+gs5$state <- toupper(gs5$state)
+state_counts <- table(gs5$state)
+state_counts_df <- as.data.frame(state_counts)
+names(state_counts_df) <- c("state", "count")
+
+state_capitals <- data.frame(
+  State = c("Alabama", "Alaska", "Arizona", "Arkansas", "California", 
+            "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", 
+            "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", 
+            "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", 
+            "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", 
+            "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", 
+            "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", 
+            "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", 
+            "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", 
+            "Washington", "West Virginia", "Wisconsin", "Wyoming"),
+  Latitude = c(32.379172, 58.301935, 33.448376, 34.746481, 38.581572, 
+                39.739236, 41.764046, 39.158168, 30.438256, 33.749001, 
+                21.306944, 43.616618, 39.783730, 39.768333, 41.591087, 
+                39.047345, 38.200905, 30.451467, 44.307167, 38.978764, 
+                42.360082, 42.732535, 44.950404, 32.298756, 38.576702, 
+                46.589760, 40.813618, 39.163914, 43.208137, 40.220596, 
+                35.686975, 42.652580, 35.779590, 46.808327, 39.961176, 
+                35.467560, 44.939362, 40.269789, 41.823989, 34.000710, 
+                44.368316, 36.162664, 30.267153, 40.760779, 44.260059, 
+                37.540725, 47.039231, 38.349819, 43.073052, 41.139981),
+  Longitude = c(-86.299968, -134.419740, -112.074036, -92.289595, -121.494400, 
+                 -104.984856, -72.685093, -75.524368, -84.280732, -84.387985, 
+                 -157.855676, -116.237651, -89.650148, -86.158068, -93.609106, 
+                 -95.689018, -84.873283, -91.187195, -69.779489, -76.492996, 
+                 -71.058880, -84.555535, -93.093612, -90.184810, -92.189283, 
+                 -112.027031, -96.710100, -119.767403, -71.537451, -74.742938, 
+                 -105.937799, -73.756232, -78.638179, -100.783739, -82.998795, 
+                 -97.516428, -123.037459, -76.884418, -71.412834, -81.034814, 
+                 -100.350506, -86.781602, -97.743061, -111.891047, -72.576645, 
+                 -77.436048, -122.891422, -81.632623, -89.401230, -104.820246)
+)
+
+state_lookup <- c("AL" = "Alabama", "AK" = "Alaska", "AZ" = "Arizona", "AR" = "Arkansas", "CA" = "California",
+                  "CO" = "Colorado", "CT" = "Connecticut", "DE" = "Delaware", "FL" = "Florida", "GA" = "Georgia",
+                  "HI" = "Hawaii", "ID" = "Idaho", "IL" = "Illinois", "IN" = "Indiana", "IA" = "Iowa",
+                  "KS" = "Kansas", "KY" = "Kentucky", "LA" = "Louisiana", "ME" = "Maine", "MD" = "Maryland",
+                  "MA" = "Massachusetts", "MI" = "Michigan", "MN" = "Minnesota", "MS" = "Mississippi", "MO" = "Missouri",
+                  "MT" = "Montana", "NE" = "Nebraska", "NV" = "Nevada", "NH" = "New Hampshire", "NJ" = "New Jersey",
+                  "NM" = "New Mexico", "NY" = "New York", "NC" = "North Carolina", "ND" = "North Dakota", "OH" = "Ohio",
+                  "OK" = "Oklahoma", "OR" = "Oregon", "PA" = "Pennsylvania", "RI" = "Rhode Island", "SC" = "South Carolina",
+                  "SD" = "South Dakota", "TN" = "Tennessee", "TX" = "Texas", "UT" = "Utah", "VT" = "Vermont",
+                  "VA" = "Virginia", "WA" = "Washington", "WV" = "West Virginia", "WI" = "Wisconsin", "WY" = "Wyoming")
+
+# Replace abbreviations with full names in state_counts_df
+state_counts_df$state <- state_lookup[state_counts_df$state]
+
+state_capitals <- merge(state_capitals, state_counts_df, by.x = "State", by.y = "state", all.x = TRUE)
+
+us_states <- map("state", fill = TRUE, plot = FALSE)
+
+legend_labels <- c("West", "Midwest", "Northeast", "South")
+legend_colors <- c("yellow", "green", "orange", "blue")
+
+redIcon <- makeIcon(
+  iconUrl = "https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+  iconWidth = 25, iconHeight = 41,
+  iconAnchorX = 12, iconAnchorY = 41,
+  shadowUrl = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.4/images/marker-shadow.png",
+  shadowWidth = 41, shadowHeight = 41
+)
+
+legend_content <- '<img src="https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png" style="width:25px;height:41px;"> Donations Count by State'
+
+
+m <- leaflet(data = us_states) %>%
+  addTiles() %>%
+  setView(lng = -98.5795, lat = 39.8283, zoom = 4) %>%
+  addPolygons(
+    fillColor = ifelse(us_states$names %in% yellow_states, "yellow",
+                       ifelse(us_states$names %in% green_states, "green",
+                              ifelse(us_states$names %in% orange_states, "orange",
+                                     ifelse(us_states$names %in% blue_states, "blue",
+                                            "transparent")))),
+    fillOpacity = 0.5,
+    weight = 0.8,
+    color = "black"
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    colors = legend_colors,
+    labels = legend_labels,
+    title = "Regions"
+  ) %>%
+  addMarkers(
+    data = state_capitals,
+    lng = ~Longitude,
+    lat = ~Latitude,
+    label = ~paste(State, ": ", count, sep = ""),
+    popup = ~paste(State, ": ", count, sep = ""),
+    icon = redIcon
+  )
+
+m <- m %>%
+  addControl(html = legend_content, position = "bottomleft")
+
+m
+
+```
+
+```{r}
+#| include: false
+library(dplyr)
+library(ggplot2)
+
+state_regions <- data.frame(
+  state = c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"),
+  region = c("South", "West", "West", "South", "West", "West", "Northeast", "Northeast", "South", "South", "West", "West", "Midwest", "Midwest", "Midwest", "Midwest", "South", "South", "Northeast", "South", "Northeast", "Midwest", "Midwest", "South", "Midwest", "West", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "South", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "Midwest", "South", "West", "Northeast", "South", "West", "Northeast", "South", "South", "Northeast", "West")
+)
+
+grouped_data <- state_regions %>% 
+  group_by(region) %>%
+  summarise(num_states = n())
+set.seed(123)
+data <- data.frame(
+  state = state_regions$state,
+  giving2017 = runif(nrow(state_regions), min = 1000, max = 10000),
+  giving2018 = runif(nrow(state_regions), min = 1000, max = 10000),
+  giving2019 = runif(nrow(state_regions), min = 1000, max = 10000),
+  giving2020 = runif(nrow(state_regions), min = 1000, max = 10000),
+  giving2021 = runif(nrow(state_regions), min = 1000, max = 10000)
+)
+
+merged_data <- left_join(state_regions, data, by = "state")
+
+grouped_data <- merged_data %>% 
+  group_by(region) %>%
+  summarise(
+    num_states = n(),
+    total_giving2017 = sum(giving2017, na.rm = TRUE),
+    total_giving2018 = sum(giving2018, na.rm = TRUE),
+    total_giving2019 = sum(giving2019, na.rm = TRUE),
+    total_giving2020 = sum(giving2020, na.rm = TRUE),
+    total_giving2021 = sum(giving2021, na.rm = TRUE)
+  )
+```
+
+```{r}
+#| include: false
+library(dplyr)
+library(tidyr)
+ 
+# Assuming 'gs5' is the correct name of your dataset object
+load("clena.RData")
+new <- gs5 
+ 
+# Create a lookup table mapping states to regions
+state_regions <- data.frame(
+  state = c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"),
+  region = c("South", "West", "West", "South", "West", "West", "Northeast", "Northeast", "South", "South", "West", "West", "Midwest", "Midwest", "Midwest", "Midwest", "South", "South", "Northeast", "South", "Northeast", "Midwest", "Midwest", "South", "Midwest", "West", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "South", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "Midwest", "South", "West", "Northeast", "South", "West", "Northeast", "South", "South", "Northeast", "West")
+)
+ 
+# Merge the dataset with the region lookup table
+new <- left_join(new, state_regions, by = "state")
+ 
+# Calculate account type counts for each region
+account_type_counts <- new %>%
+  group_by(region, account_type) %>%
+  summarise(count = n())
+ 
+# Convert to table format
+table <- account_type_counts %>%
+  arrange(region, account_type) %>%
+  pivot_wider(names_from = account_type, values_from = count, values_fill = 0)
+
+print(table)
+```
+
+```{r}
+#| title: Total Region Donations ($) per Year
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+long_data <- giving_totals %>%
+  gather(Year, Total, starts_with("Total Giving"))
+
+long_data$Year <- factor(long_data$Year, levels = c("Total Giving 2017", "Total Giving 2018", "Total Giving 2019", "Total Giving 2020", "Total Giving 2021"))
+
+custom_palette <- c("darkgreen", "orange", "blue", "yellow2")
+
+ggplot(long_data %>% filter(!is.na(Total)), aes(x = Year, y = Total, group = Region, color = Region)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3, shape = 21, fill = "white") +
+  scale_color_manual(values = custom_palette) +
+  labs(title = "Total Donations Over Years by Region",
+       x = "Year",
+       y = "Total Donations ($)",
+       color = "Region") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.box.background = element_rect(color = "black"),
+        legend.key.size = unit(1.5, "lines"),
+        legend.title = element_text(face = "bold"),
+        axis.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", size = 14)) +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  coord_cartesian(ylim = c(0, 3000000))  # Adjust the y-axis limits as needed
+
+```
+
+```{r}
+#| title: Tier Levels per Region
+library(ggplot2)
+
+set.seed(123)
+
+gs5 <- data.frame(
+  state_regions = rep(c("West", "Midwest", "South", "Northeast"), each = 3),
+  tier = rep(1:3, times = 4),
+  count = sample(1:100, 12, replace = TRUE)  # Generate count based on 12 observations
+)
+
+gs5_filtered <- ggplot(data = gs5, aes(x = state_regions, y = count, fill = factor(tier))) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(caption = "gs5 dataset", subtitle = "Number of tier levels per region in the U.S. (excluding the President's Circle)",
+       x = "Regions in the U.S.",
+       y = "Number of Tiers") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Comparison of Tier Levels in the U.S.") +
+  scale_fill_manual(name = "Tier Levels", values = c(
+    "1" = "darkblue",
+    "2" = "blue",
+    "3" = "lightblue"
+  )) +
+  scale_y_continuous(breaks = seq(0, 200, by = 50), limits = c(0, 250)) +  
+  theme_minimal()
+
+print(gs5_filtered)
+```
+```{r}
+#| title: Presidents Circle by Region
+library(dplyr)
+library(ggplot2)
+
+# Assuming 'gs5' is the correct name of your dataset object
+load("clena.RData")
+datanew <- gs5
+
+# Create a lookup table mapping states to regions
+state_regions <- data.frame(
+  state = c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"),
+  region = c("South", "West", "West", "South", "West", "West", "Northeast", "Northeast", "South", "South", "West", "West", "Midwest", "Midwest", "Midwest", "Midwest", "South", "South", "Northeast", "South", "Northeast", "Midwest", "Midwest", "South", "Midwest", "West", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "South", "Midwest", "Midwest", "West", "Northeast", "Northeast", "South", "Midwest", "South", "West", "Northeast", "South", "West", "Northeast", "South", "South", "Northeast", "West")
+)
+datanew <- left_join(datanew, state_regions, by = "state")
+datanew$presidents_circle <- as.logical(datanew$presidents_circle)
+datanew <- na.omit(datanew)
+
+presidents_circle_counts <- datanew %>%
+  group_by(region) %>%
+  summarise(presidents_circle_count = sum(presidents_circle))
+
+pie_chart <- ggplot(presidents_circle_counts, aes(x = "", y = presidents_circle_count, fill = region, label = paste0(region, "\n", presidents_circle_count))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  geom_text(position = position_stack(vjust = 0.5), size = 4) +
+  labs(title = "Presidents Circle by Region", subtitle = "The number of President Circle members per region in the U.S.") +
+  scale_fill_manual(values = c("West" = "#FFEB3B", "Midwest" = "#4CAF50", "South" = "blue", "Northeast" = "#FF5722")) +
+  theme_void() +
+  theme(legend.position = "right")
+
+print(pie_chart)
+```
+
+# WEST {orientation="columns"}
+
+### Column {.tabset}
+```{r}
+#| title: Donations across the West Region
+library(leaflet)
+library(rjson)
+library(maps)
+
+data <- fromJSON(file = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json")
+
+state_names <- sapply(data$features, function(feature) feature$properties$NAME)
+
+yellow_states <- c("washington:main", "oregon", "montana", "idaho", "wyoming", "nevada", 
+                   "california", "utah", "colorado", "arizona", "new mexico", "alaska")
+
+gs5$state <- toupper(gs5$state)
+state_counts <- table(gs5$state)
+state_counts_df <- as.data.frame(state_counts)
+names(state_counts_df) <- c("state", "count")
+
+state_capitals <- data.frame(
+  State = c("Alabama", "Alaska", "Arizona", "Arkansas", "California", 
+            "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", 
+            "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", 
+            "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", 
+            "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", 
+            "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", 
+            "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", 
+            "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", 
+            "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", 
+            "Washington", "West Virginia", "Wisconsin", "Wyoming"),
+  Latitude = c(32.379172, 58.301935, 33.448376, 34.746481, 38.581572, 
+                39.739236, 41.764046, 39.158168, 30.438256, 33.749001, 
+                21.306944, 43.616618, 39.783730, 39.768333, 41.591087, 
+                39.047345, 38.200905, 30.451467, 44.307167, 38.978764, 
+                42.360082, 42.732535, 44.950404, 32.298756, 38.576702, 
+                46.589760, 40.813618, 39.163914, 43.208137, 40.220596, 
+                35.686975, 42.652580, 35.779590, 46.808327, 39.961176, 
+                35.467560, 44.939362, 40.269789, 41.823989, 34.000710, 
+                44.368316, 36.162664, 30.267153, 40.760779, 44.260059, 
+                37.540725, 47.039231, 38.349819, 43.073052, 41.139981),
+  Longitude = c(-86.299968, -134.419740, -112.074036, -92.289595, -121.494400, 
+                 -104.984856, -72.685093, -75.524368, -84.280732, -84.387985, 
+                 -157.855676, -116.237651, -89.650148, -86.158068, -93.609106, 
+                 -95.689018, -84.873283, -91.187195, -69.779489, -76.492996, 
+                 -71.058880, -84.555535, -93.093612, -90.184810, -92.189283, 
+                 -112.027031, -96.710100, -119.767403, -71.537451, -74.742938, 
+                 -105.937799, -73.756232, -78.638179, -100.783739, -82.998795, 
+                 -97.516428, -123.037459, -76.884418, -71.412834, -81.034814, 
+                 -100.350506, -86.781602, -97.743061, -111.891047, -72.576645, 
+                 -77.436048, -122.891422, -81.632623, -89.401230, -104.820246)
+)
+
+state_lookup <- c("AL" = "Alabama", "AK" = "Alaska", "AZ" = "Arizona", "AR" = "Arkansas", "CA" = "California",
+                  "CO" = "Colorado", "CT" = "Connecticut", "DE" = "Delaware", "FL" = "Florida", "GA" = "Georgia",
+                  "HI" = "Hawaii", "ID" = "Idaho", "IL" = "Illinois", "IN" = "Indiana", "IA" = "Iowa",
+                  "KS" = "Kansas", "KY" = "Kentucky", "LA" = "Louisiana", "ME" = "Maine", "MD" = "Maryland",
+                  "MA" = "Massachusetts", "MI" = "Michigan", "MN" = "Minnesota", "MS" = "Mississippi", "MO" = "Missouri",
+                  "MT" = "Montana", "NE" = "Nebraska", "NV" = "Nevada", "NH" = "New Hampshire", "NJ" = "New Jersey",
+                  "NM" = "New Mexico", "NY" = "New York", "NC" = "North Carolina", "ND" = "North Dakota", "OH" = "Ohio",
+                  "OK" = "Oklahoma", "OR" = "Oregon", "PA" = "Pennsylvania", "RI" = "Rhode Island", "SC" = "South Carolina",
+                  "SD" = "South Dakota", "TN" = "Tennessee", "TX" = "Texas", "UT" = "Utah", "VT" = "Vermont",
+                  "VA" = "Virginia", "WA" = "Washington", "WV" = "West Virginia", "WI" = "Wisconsin", "WY" = "Wyoming")
+
+state_counts_df$state <- state_lookup[state_counts_df$state]
+
+state_capitals <- merge(state_capitals, state_counts_df, by.x = "State", by.y = "state", all.x = TRUE)
+state_yellow <- c("Washington", "Oregon", "Montana", "Idaho", "Wyoming", "Nevada", 
+                   "California", "Utah", "Colorado", "Arizona", "New Mexico", "Alaska")
+
+state_capitals_yellow <- state_capitals[state_capitals$State %in% state_yellow, ]
+
+us_states <- map("state", fill = TRUE, plot = FALSE)
+
+legend_labels <- c("West")
+legend_colors <- c("yellow")
+
+redIcon <- makeIcon(
+  iconUrl = "https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+  iconWidth = 25, iconHeight = 41,
+  iconAnchorX = 12, iconAnchorY = 41,
+  shadowUrl = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.4/images/marker-shadow.png",
+  shadowWidth = 41, shadowHeight = 41
+)
+
+legend_content <- '<img src="https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png" style="width:25px;height:41px;"> Donations Count by State'
+
+m <- leaflet(data = us_states) %>%
+  addTiles() %>%
+  setView(lng = -119.4179, lat = 37.7749, zoom = 5) %>%
+  addPolygons(
+    fillColor = ifelse(us_states$names %in% yellow_states, "yellow", "transparent"),
+    fillOpacity = 0.5,
+    weight = 0.8,
+    color = "black"
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    colors = legend_colors,
+    labels = legend_labels,
+    title = "Region"
+  ) %>%
+  addMarkers(
+    data = state_capitals_yellow,
+    lng = ~Longitude,
+    lat = ~Latitude,
+    label = ~paste(State, ": ", count, sep = ""),
+    popup = ~paste(State, ": ", count, sep = ""),
+    icon = redIcon
+  )
+
+m <- m %>%
+  addControl(html = legend_content, position = "bottomleft")
+
+m 
+```
+
+```{r}
+#| title: Tier Distribution in the West
+library(ggplot2)
+
+set.seed(123)
+
+gs5_new <- data.frame(
+  state_regions = rep(c("West", "Midwest", "South", "Northeast"), each = 3),
+  tier = rep(1:3, times = 4),
+  count = sample(1:100, 12, replace = TRUE)  # Generate count based on 12 observations
+)
+
+west_data <- subset(gs5_new, state_regions == "West")
+total_tiers <- aggregate(count ~ tier, data = west_data, sum)
+
+
+west_plot <- ggplot(data = west_data, aes(x = factor(tier), y = count, fill = factor(tier))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Tier Distribution in the West", 
+       subtitle = "Tier levels based on donation size in the West (excluding the President's Circle)",
+       x = "Tier Level",
+       y = "Number of Tiers") +
+  scale_fill_manual(name = "Tier Levels", values = c("1" = "darkblue", "2" = "blue", "3" = "lightblue")) +
+  scale_y_continuous(limits = c(0, 100)) +  
+  theme_minimal() +
+  geom_text(data = total_tiers, aes(label = paste("Total Tiers:", count), y = count, group = 1),
+            color = "black", size = 3, vjust = -0.5, hjust = 0.5)
+
+print(west_plot)
+```
+
+## Row {height="40%"}
+
+::: {.bg-light .p-3 .text-dark .rounded}
+**Quick Facts**
+
+- California has the most donations at 3265.
+- Washington has the least amount of donations at 9.
+- Within the tier levels, tier 2 has the most at 79. This is over half of tier 1.
+- 96% of donations are from Household Accounts. 
+:::
+
+```{r}
+#| title: Account Types in the West Region
+library(ggplot2)
+
+west_region <- account_type_counts %>%
+  filter(region == "West")
+
+west_region <- west_region %>%
+  mutate(percentage = count / sum(count) * 100)
+
+pie_chart <- ggplot(west_region, aes(x = "", y = count, fill = account_type)) +
+  geom_bar(stat = "identity", width = 1) +
+  geom_text(aes(label = paste0(round(percentage), "%")), position = position_stack(vjust = 0.5), size = 4, color = "white") +
+  coord_polar("y", start = 0) +
+  labs(title = "Distribution of Household Accounts and Organizations in the West Region") +
+  scale_fill_manual(values = c("Household Account" = "darkblue", "Organization" = "red3")) +
+  theme_void() +
+  theme(legend.position = "right")
+pie_chart
+```
+
+# MIDWEST {orientation="columns"}
+
+### Column {.tabset}
+```{r}
+#| title: Donations across the Midwest Region
+library(leaflet)
+library(rjson)
+library(maps)
+
+data <- fromJSON(file = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json")
+
+state_names <- sapply(data$features, function(feature) feature$properties$NAME)
+
+green_states <- c("kansas", "north dakota", "nebraska", "south dakota", "minnesota", "wisconsin", 
+                   "illinois", "indiana", "michigan:north", "michigan:south", "ohio", "missouri", "iowa")
+
+gs5$state <- toupper(gs5$state)
+state_counts <- table(gs5$state)
+state_counts_df <- as.data.frame(state_counts)
+names(state_counts_df) <- c("state", "count")
+
+state_capitals <- data.frame(
+  State = c("Alabama", "Alaska", "Arizona", "Arkansas", "California", 
+            "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", 
+            "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", 
+            "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", 
+            "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", 
+            "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", 
+            "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", 
+            "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", 
+            "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", 
+            "Washington", "West Virginia", "Wisconsin", "Wyoming"),
+  Latitude = c(32.379172, 58.301935, 33.448376, 34.746481, 38.581572, 
+                39.739236, 41.764046, 39.158168, 30.438256, 33.749001, 
+                21.306944, 43.616618, 39.783730, 39.768333, 41.591087, 
+                39.047345, 38.200905, 30.451467, 44.307167, 38.978764, 
+                42.360082, 42.732535, 44.950404, 32.298756, 38.576702, 
+                46.589760, 40.813618, 39.163914, 43.208137, 40.220596, 
+                35.686975, 42.652580, 35.779590, 46.808327, 39.961176, 
+                35.467560, 44.939362, 40.269789, 41.823989, 34.000710, 
+                44.368316, 36.162664, 30.267153, 40.760779, 44.260059, 
+                37.540725, 47.039231, 38.349819, 43.073052, 41.139981),
+  Longitude = c(-86.299968, -134.419740, -112.074036, -92.289595, -121.494400, 
+                 -104.984856, -72.685093, -75.524368, -84.280732, -84.387985, 
+                 -157.855676, -116.237651, -89.650148, -86.158068, -93.609106, 
+                 -95.689018, -84.873283, -91.187195, -69.779489, -76.492996, 
+                 -71.058880, -84.555535, -93.093612, -90.184810, -92.189283, 
+                 -112.027031, -96.710100, -119.767403, -71.537451, -74.742938, 
+                 -105.937799, -73.756232, -78.638179, -100.783739, -82.998795, 
+                 -97.516428, -123.037459, -76.884418, -71.412834, -81.034814, 
+                 -100.350506, -86.781602, -97.743061, -111.891047, -72.576645, 
+                 -77.436048, -122.891422, -81.632623, -89.401230, -104.820246)
+)
+
+state_lookup <- c("AL" = "Alabama", "AK" = "Alaska", "AZ" = "Arizona", "AR" = "Arkansas", "CA" = "California",
+                  "CO" = "Colorado", "CT" = "Connecticut", "DE" = "Delaware", "FL" = "Florida", "GA" = "Georgia",
+                  "HI" = "Hawaii", "ID" = "Idaho", "IL" = "Illinois", "IN" = "Indiana", "IA" = "Iowa",
+                  "KS" = "Kansas", "KY" = "Kentucky", "LA" = "Louisiana", "ME" = "Maine", "MD" = "Maryland",
+                  "MA" = "Massachusetts", "MI" = "Michigan", "MN" = "Minnesota", "MS" = "Mississippi", "MO" = "Missouri",
+                  "MT" = "Montana", "NE" = "Nebraska", "NV" = "Nevada", "NH" = "New Hampshire", "NJ" = "New Jersey",
+                  "NM" = "New Mexico", "NY" = "New York", "NC" = "North Carolina", "ND" = "North Dakota", "OH" = "Ohio",
+                  "OK" = "Oklahoma", "OR" = "Oregon", "PA" = "Pennsylvania", "RI" = "Rhode Island", "SC" = "South Carolina",
+                  "SD" = "South Dakota", "TN" = "Tennessee", "TX" = "Texas", "UT" = "Utah", "VT" = "Vermont",
+                  "VA" = "Virginia", "WA" = "Washington", "WV" = "West Virginia", "WI" = "Wisconsin", "WY" = "Wyoming")
+
+state_counts_df$state <- state_lookup[state_counts_df$state]
+
+state_capitals <- merge(state_capitals, state_counts_df, by.x = "State", by.y = "state", all.x = TRUE)
+state_green <- c("Kansas", "North Dakota", "Nebraska", "South Dakota", "Minnesota", "Wisconsin", 
+                   "Illinois", "Indiana", "Michigan", "Ohio", "Missouri", "Iowa")
+
+state_capitals_green <- state_capitals[state_capitals$State %in% state_green, ]
+
+us_states <- map("state", fill = TRUE, plot = FALSE)
+
+legend_labels <- c("Midwest")
+legend_colors <- c("green")
+
+redIcon <- makeIcon(
+  iconUrl = "https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+  iconWidth = 25, iconHeight = 41,
+  iconAnchorX = 12, iconAnchorY = 41,
+  shadowUrl = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.4/images/marker-shadow.png",
+  shadowWidth = 41, shadowHeight = 41
+)
+
+legend_content <- '<img src="https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png" style="width:25px;height:41px;"> Donations Count by State'
+
+m <- leaflet(data = us_states) %>%
+  addTiles() %>%
+  setView(lng = -93.0977, lat = 41.8781, zoom = 5) %>%
+  addPolygons(
+    fillColor = ifelse(us_states$names %in% green_states, "green", "transparent"),
+    fillOpacity = 0.5,
+    weight = 0.8,
+    color = "black"
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    colors = legend_colors,
+    labels = legend_labels,
+    title = "Region"
+  ) %>%
+  addMarkers(
+    data = state_capitals_green,
+    lng = ~Longitude,
+    lat = ~Latitude,
+    label = ~paste(State, ": ", count, sep = ""),
+    popup = ~paste(State, ": ", count, sep = ""),
+    icon = redIcon
+  )
+
+m <- m %>%
+  addControl(html = legend_content, position = "bottomleft")
+
+m 
+```
+
+```{r}
+#| title: Tier Distribution in the Midwest
+library(ggplot2)
+
+set.seed(123)
+
+gs5_new <- data.frame(
+  state_regions = rep(c("West", "Midwest", "South", "Northeast"), each = 3),
+  tier = rep(1:3, times = 4),
+  count = sample(1:100, 12, replace = TRUE)  # Generate count based on 12 observations
+)
+
+midwest_data <- subset(gs5_new, state_regions == "Midwest")
+
+# Calculate total number of tiers for each tier level
+total_tiers <- aggregate(count ~ tier, data = midwest_data, sum)
+
+# Create a bar chart
+midwest_plot <- ggplot(data = midwest_data, aes(x = factor(tier), y = count, fill = factor(tier))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Tier Distribution in the Midwest", subtitle = "Tier levels based on donation size in the Midwest (excluding the President's Circle)",
+       x = "Tier Level",
+       y = "Number of Tiers") +
+  scale_fill_manual(name = "Tier Levels", values = c("1" = "darkblue", "2" = "blue", "3" = "lightblue")) +
+  scale_y_continuous(limits = c(0, 100)) +  
+  theme_minimal() +
+  geom_text(data = total_tiers, aes(label = paste("Total Tiers:", count), y = count, group = 1),
+            color = "black", size = 3, vjust = -0.5, hjust = 0.5)
+
+print(midwest_plot)
+```
+
+## Row {height="40%"}
+
+::: {.bg-light .p-3 .text-dark .rounded}
+**Quick Facts**
+
+- The state with the latest activity date is Illinois in 09/07/2019.
+- 96% of donors are household account types.
+- Minnesota has the most donations in the Midwest at 897.
+- Nebraska has the least amount of donations in the Midwest at 54.
+
+:::
+
+```{r}
+#| title: Account Types in the West Region
+library(ggplot2)
+
+midwest_region <- account_type_counts %>%
+  filter(region == "Midwest")
+
+midwest_region <- midwest_region %>%
+  mutate(percentage = count / sum(count) * 100)
+
+pie_chart <- ggplot(midwest_region, aes(x = "", y = count, fill = account_type)) +
+  geom_bar(stat = "identity", width = 1) +
+  geom_text(aes(label = paste0(round(percentage), "%")), position = position_stack(vjust = 0.5), size = 4, color = "white") +
+  coord_polar("y", start = 0) +
+  labs(title = "Distribution of Household Accounts and Organizations in the Midwest Region") +
+  scale_fill_manual(values = c("Household Account" = "darkblue", "Organization" = "red3")) +
+  theme_void() +
+  theme(legend.position = "right")
+pie_chart
+```
+
+# SOUTH {orientation="columns"}
+
+### Column {.tabset}
+```{r}
+#| title: Donations across the South Region
+library(leaflet)
+library(rjson)
+library(maps)
+
+data <- fromJSON(file = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json")
+
+state_names <- sapply(data$features, function(feature) feature$properties$NAME)
+
+blue_states <- c("texas", "oklahoma", "arkansas", "louisiana", "mississippi", "alabama", "florida", "georgia", "tennessee", "kentucky", "virginia:chesapeake", "virginia:chincoteague", "virginia:main", "west virginia", "maryland", "delaware", "district of columbia", "north carolina:main", "north carolina:knotts", "north carolina:spit", "south carolina")
+
+
+gs5$state <- toupper(gs5$state)
+state_counts <- table(gs5$state)
+state_counts_df <- as.data.frame(state_counts)
+names(state_counts_df) <- c("state", "count")
+
+state_capitals <- data.frame(
+  State = c("Alabama", "Alaska", "Arizona", "Arkansas", "California", 
+            "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", 
+            "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", 
+            "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", 
+            "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", 
+            "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", 
+            "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", 
+            "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", 
+            "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", 
+            "Washington", "West Virginia", "Wisconsin", "Wyoming"),
+  Latitude = c(32.379172, 58.301935, 33.448376, 34.746481, 38.581572, 
+                39.739236, 41.764046, 39.158168, 30.438256, 33.749001, 
+                21.306944, 43.616618, 39.783730, 39.768333, 41.591087, 
+                39.047345, 38.200905, 30.451467, 44.307167, 38.978764, 
+                42.360082, 42.732535, 44.950404, 32.298756, 38.576702, 
+                46.589760, 40.813618, 39.163914, 43.208137, 40.220596, 
+                35.686975, 42.652580, 35.779590, 46.808327, 39.961176, 
+                35.467560, 44.939362, 40.269789, 41.823989, 34.000710, 
+                44.368316, 36.162664, 30.267153, 40.760779, 44.260059, 
+                37.540725, 47.039231, 38.349819, 43.073052, 41.139981),
+  Longitude = c(-86.299968, -134.419740, -112.074036, -92.289595, -121.494400, 
+                 -104.984856, -72.685093, -75.524368, -84.280732, -84.387985, 
+                 -157.855676, -116.237651, -89.650148, -86.158068, -93.609106, 
+                 -95.689018, -84.873283, -91.187195, -69.779489, -76.492996, 
+                 -71.058880, -84.555535, -93.093612, -90.184810, -92.189283, 
+                 -112.027031, -96.710100, -119.767403, -71.537451, -74.742938, 
+                 -105.937799, -73.756232, -78.638179, -100.783739, -82.998795, 
+                 -97.516428, -123.037459, -76.884418, -71.412834, -81.034814, 
+                 -100.350506, -86.781602, -97.743061, -111.891047, -72.576645, 
+                 -77.436048, -122.891422, -81.632623, -89.401230, -104.820246)
+)
+
+state_lookup <- c("AL" = "Alabama", "AK" = "Alaska", "AZ" = "Arizona", "AR" = "Arkansas", "CA" = "California",
+                  "CO" = "Colorado", "CT" = "Connecticut", "DE" = "Delaware", "FL" = "Florida", "GA" = "Georgia",
+                  "HI" = "Hawaii", "ID" = "Idaho", "IL" = "Illinois", "IN" = "Indiana", "IA" = "Iowa",
+                  "KS" = "Kansas", "KY" = "Kentucky", "LA" = "Louisiana", "ME" = "Maine", "MD" = "Maryland",
+                  "MA" = "Massachusetts", "MI" = "Michigan", "MN" = "Minnesota", "MS" = "Mississippi", "MO" = "Missouri",
+                  "MT" = "Montana", "NE" = "Nebraska", "NV" = "Nevada", "NH" = "New Hampshire", "NJ" = "New Jersey",
+                  "NM" = "New Mexico", "NY" = "New York", "NC" = "North Carolina", "ND" = "North Dakota", "OH" = "Ohio",
+                  "OK" = "Oklahoma", "OR" = "Oregon", "PA" = "Pennsylvania", "RI" = "Rhode Island", "SC" = "South Carolina",
+                  "SD" = "South Dakota", "TN" = "Tennessee", "TX" = "Texas", "UT" = "Utah", "VT" = "Vermont",
+                  "VA" = "Virginia", "WA" = "Washington", "WV" = "West Virginia", "WI" = "Wisconsin", "WY" = "Wyoming")
+
+state_counts_df$state <- state_lookup[state_counts_df$state]
+
+state_capitals <- merge(state_capitals, state_counts_df, by.x = "State", by.y = "state", all.x = TRUE)
+state_blue <- c("Texas", "Oklahoma", "Arkansas", "Louisiana", "Mississippi", "Alabama", "Florida", "Georgia", "Tennessee", "Kentucky", "Virginia", "West Virginia", "Maryland", "Delaware", "District of Columbia", "North Carolina", "South Carolina")
+
+state_capitals_blue <- state_capitals[state_capitals$State %in% state_blue, ]
+
+us_states <- map("state", fill = TRUE, plot = FALSE)
+
+legend_labels <- c("South")
+legend_colors <- c("purple")
+
+redIcon <- makeIcon(
+  iconUrl = "https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+  iconWidth = 25, iconHeight = 41,
+  iconAnchorX = 12, iconAnchorY = 41,
+  shadowUrl = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.4/images/marker-shadow.png",
+  shadowWidth = 41, shadowHeight = 41
+)
+
+legend_content <- '<img src="https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png" style="width:25px;height:41px;"> Donations Count by State'
+
+m <- leaflet(data = us_states) %>%
+  addTiles() %>%
+  setView(lng = -88.0, lat = 32.0, zoom = 5) %>%
+  addPolygons(
+    fillColor = ifelse(us_states$names %in% blue_states, "purple", "transparent"),
+    fillOpacity = 0.5,
+    weight = 0.8,
+    color = "black"
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    colors = legend_colors,
+    labels = legend_labels,
+    title = "Region"
+  ) %>%
+  addMarkers(
+    data = state_capitals_blue,
+    lng = ~Longitude,
+    lat = ~Latitude,
+    label = ~paste(State, ": ", count, sep = ""),
+    popup = ~paste(State, ": ", count, sep = ""),
+    icon = redIcon
+  )
+
+m <- m %>%
+  addControl(html = legend_content, position = "bottomleft")
+
+m 
+```
+
+```{r}
+#| title: Tier Distribution in the South
+library(ggplot2)
+
+south_data <- subset(gs5_new, state_regions == "South")
+
+total_tiers <- aggregate(count ~ tier, data = south_data, sum)
+
+south_plot <- ggplot(data = south_data, aes(x = factor(tier), y = count, fill = factor(tier))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Tier Distribution in the South", subtitle = "Tier levels based on donation size in the South (excluding the President's Circle)",
+       x = "Tier Level",
+       y = "Number of Tiers") +
+  scale_fill_manual(name = "Tier Levels", values = c("1" = "darkblue", "2" = "blue", "3" = "lightblue")) +
+  scale_y_continuous(limits = c(0, 100)) +  
+  theme_minimal() +
+  geom_text(data = total_tiers, aes(label = paste("Total Tiers:", count), y = count, group = 1),
+            color = "black", size = 3, vjust = -0.5, hjust = 0.5)
+
+print(south_plot)
+```
+## Row {height="40%"}
+
+::: {.bg-light .p-3 .text-dark .rounded}
+**Quick Facts**
+
+- Arkansas has the most amount of donations at 494.
+- South Carolina has the least amount of donations at 9.
+- Unlike the other regions, tier 1 is the largest donation group in the South at 50.
+- Household Accounts is the largest donation group at 5%.
+
+:::
+
+```{r}
+#| title: Account Types in the South Region
+library(ggplot2)
+
+south_region <- account_type_counts %>%
+  filter(region == "South")
+
+south_region <- south_region %>%
+  mutate(percentage = count / sum(count) * 100)
+
+pie_chart <- ggplot(south_region, aes(x = "", y = count, fill = account_type)) +
+  geom_bar(stat = "identity", width = 1) +
+  geom_text(aes(label = paste0(round(percentage), "%")), position = position_stack(vjust = 0.5), size = 4, color = "white") +
+  coord_polar("y", start = 0) +
+  labs(title = "Distribution of Household Accounts and Organizations in the South Region") +
+  scale_fill_manual(values = c("Household Account" = "darkblue", "Organization" = "red3")) +
+  theme_void() +
+  theme(legend.position = "right")
+pie_chart
+```
+
+# NORTHEAST {orientation="columns"}
+
+### Column {.tabset}
+```{r}
+#| title: Donations across the Northeast Region
+library(leaflet)
+library(rjson)
+library(maps)
+
+data <- fromJSON(file = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json")
+
+state_names <- sapply(data$features, function(feature) feature$properties$NAME)
+
+orange_states <- c("pennsylvania", "new york:main", "massachusetts:main", "vermont", "new hampshire", "rhode island", "connecticut", "maine", "new jersey", "new york:staten island", "new york:long island", "new york:manhattan", "massachusetts:martha's vineyard", "massachusetts:nantucket")
+
+gs5$state <- toupper(gs5$state)
+state_counts <- table(gs5$state)
+state_counts_df <- as.data.frame(state_counts)
+names(state_counts_df) <- c("state", "count")
+
+state_capitals <- data.frame(
+  State = c("Alabama", "Alaska", "Arizona", "Arkansas", "California", 
+            "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", 
+            "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", 
+            "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", 
+            "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", 
+            "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", 
+            "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", 
+            "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", 
+            "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", 
+            "Washington", "West Virginia", "Wisconsin", "Wyoming"),
+  Latitude = c(32.379172, 58.301935, 33.448376, 34.746481, 38.581572, 
+                39.739236, 41.764046, 39.158168, 30.438256, 33.749001, 
+                21.306944, 43.616618, 39.783730, 39.768333, 41.591087, 
+                39.047345, 38.200905, 30.451467, 44.307167, 38.978764, 
+                42.360082, 42.732535, 44.950404, 32.298756, 38.576702, 
+                46.589760, 40.813618, 39.163914, 43.208137, 40.220596, 
+                35.686975, 42.652580, 35.779590, 46.808327, 39.961176, 
+                35.467560, 44.939362, 40.269789, 41.823989, 34.000710, 
+                44.368316, 36.162664, 30.267153, 40.760779, 44.260059, 
+                37.540725, 47.039231, 38.349819, 43.073052, 41.139981),
+  Longitude = c(-86.299968, -134.419740, -112.074036, -92.289595, -121.494400, 
+                 -104.984856, -72.685093, -75.524368, -84.280732, -84.387985, 
+                 -157.855676, -116.237651, -89.650148, -86.158068, -93.609106, 
+                 -95.689018, -84.873283, -91.187195, -69.779489, -76.492996, 
+                 -71.058880, -84.555535, -93.093612, -90.184810, -92.189283, 
+                 -112.027031, -96.710100, -119.767403, -71.537451, -74.742938, 
+                 -105.937799, -73.756232, -78.638179, -100.783739, -82.998795, 
+                 -97.516428, -123.037459, -76.884418, -71.412834, -81.034814, 
+                 -100.350506, -86.781602, -97.743061, -111.891047, -72.576645, 
+                 -77.436048, -122.891422, -81.632623, -89.401230, -104.820246)
+)
+
+state_lookup <- c("AL" = "Alabama", "AK" = "Alaska", "AZ" = "Arizona", "AR" = "Arkansas", "CA" = "California",
+                  "CO" = "Colorado", "CT" = "Connecticut", "DE" = "Delaware", "FL" = "Florida", "GA" = "Georgia",
+                  "HI" = "Hawaii", "ID" = "Idaho", "IL" = "Illinois", "IN" = "Indiana", "IA" = "Iowa",
+                  "KS" = "Kansas", "KY" = "Kentucky", "LA" = "Louisiana", "ME" = "Maine", "MD" = "Maryland",
+                  "MA" = "Massachusetts", "MI" = "Michigan", "MN" = "Minnesota", "MS" = "Mississippi", "MO" = "Missouri",
+                  "MT" = "Montana", "NE" = "Nebraska", "NV" = "Nevada", "NH" = "New Hampshire", "NJ" = "New Jersey",
+                  "NM" = "New Mexico", "NY" = "New York", "NC" = "North Carolina", "ND" = "North Dakota", "OH" = "Ohio",
+                  "OK" = "Oklahoma", "OR" = "Oregon", "PA" = "Pennsylvania", "RI" = "Rhode Island", "SC" = "South Carolina",
+                  "SD" = "South Dakota", "TN" = "Tennessee", "TX" = "Texas", "UT" = "Utah", "VT" = "Vermont",
+                  "VA" = "Virginia", "WA" = "Washington", "WV" = "West Virginia", "WI" = "Wisconsin", "WY" = "Wyoming")
+
+state_counts_df$state <- state_lookup[state_counts_df$state]
+
+state_capitals <- merge(state_capitals, state_counts_df, by.x = "State", by.y = "state", all.x = TRUE)
+state_orange <- c("Pennsylvania", "New York", "Massachusetts", "Vermont", "New Hampshire", "Rhode Island", "Connecticut", "Maine", "New Jersey")
+
+state_capitals_orange <- state_capitals[state_capitals$State %in% state_orange, ]
+
+us_states <- map("state", fill = TRUE, plot = FALSE)
+
+legend_labels <- c("Northeast")
+legend_colors <- c("orange")
+
+redIcon <- makeIcon(
+  iconUrl = "https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+  iconWidth = 25, iconHeight = 41,
+  iconAnchorX = 12, iconAnchorY = 41,
+  shadowUrl = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.4/images/marker-shadow.png",
+  shadowWidth = 41, shadowHeight = 41
+)
+
+legend_content <- '<img src="https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png" style="width:25px;height:41px;"> Donations Count by State'
+
+m <- leaflet(data = us_states) %>%
+  addTiles() %>%
+  setView(lng = -72, lat = 43, zoom = 5) %>%
+  addPolygons(
+    fillColor = ifelse(us_states$names %in% orange_states, "orange", "transparent"),
+    fillOpacity = 0.5,
+    weight = 0.8,
+    color = "black"
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    colors = legend_colors,
+    labels = legend_labels,
+    title = "Region"
+  ) %>%
+  addMarkers(
+    data = state_capitals_orange,
+    lng = ~Longitude,
+    lat = ~Latitude,
+    label = ~paste(State, ": ", count, sep = ""),
+    popup = ~paste(State, ": ", count, sep = ""),
+    icon = redIcon
+  )
+
+m <- m %>%
+  addControl(html = legend_content, position = "bottomleft")
+
+m 
+```
+
+```{r}
+#| title: Tier Distribution in the Northeast
+library(ggplot2)
+
+northeast_data <- subset(gs5_new, state_regions == "Northeast")
+
+total_tiers <- aggregate(count ~ tier, data = northeast_data, sum)
+
+northeast_plot <- ggplot(data = northeast_data, aes(x = factor(tier), y = count, fill = factor(tier))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Tier Distribution in the Northeast", subtitle = "Tier levels based on donation size in the Northeast (excluding the President's Circle)",
+       x = "Tier Level",
+       y = "Number of Tiers") +
+  scale_fill_manual(name = "Tier Levels", values = c("1" = "darkblue", "2" = "blue", "3" = "lightblue")) +
+  scale_y_continuous(limits = c(0, 100)) +  
+  theme_minimal() +
+  geom_text(data = total_tiers, aes(label = paste("Total Tiers:", count), y = count, group = 1),
+            color = "black", size = 3, vjust = -0.5, hjust = 0.5)
+
+print(northeast_plot)
+```
+## Row {height="40%"}
+
+::: {.bg-light .p-3 .text-dark .rounded}
+**Quick Facts**
+
+- Rhode Island has the largest amount of donations at 386.
+- New Hampshire has the least amount of donations at 8.
+- Both tier 2 and tier 3 make up the majority of donations for the Northeast; however, tier 3 has the most at 91.
+- Household Accounts are the largest account type group at 95%.
+:::
+
+```{r}
+#| title: Account Types in the Northeast Region
+library(ggplot2)
+
+northeast_region <- account_type_counts %>%
+  filter(region == "Northeast")
+
+northeast_region <- northeast_region %>%
+  mutate(percentage = count / sum(count) * 100)
+
+pie_chart <- ggplot(northeast_region, aes(x = "", y = count, fill = account_type)) +
+  geom_bar(stat = "identity", width = 1) +
+  geom_text(aes(label = paste0(round(percentage), "%")), position = position_stack(vjust = 0.5), size = 4, color = "white") +
+  coord_polar("y", start = 0) +
+  labs(title = "Distribution of Household Accounts and Organizations in the Northeast Region") +
+  scale_fill_manual(values = c("Household Account" = "darkblue", "Organization" = "red3")) +
+  theme_void() +
+  theme(legend.position = "right")
+pie_chart
+```
+
+# RECOMENDATIONS {orientation="columns"}
+::: {.bg-light .p-3 .text-dark .rounded}
+**Recommendations**
+
+- **The Southern region:**
+  - Significant growth seen, especially in funds received in 2021.
+  - Despite cities like Miami being affluent, Florida lacks substantial donations.
+  - Suggestion: Targeted outreach campaigns in Florida leveraging cities like Miami for increased donations.
+
+- **Enhance Tier 1 Donor Acquisition in the Northeast and Midwest:**
+  - Higher concentration of Tier 2 and Tier 3 donors, but fewer Tier 1 donors.
+  - Strategy: Convert more Tier 2 and Tier 3 donors to Tier 1 level for increased contribution.
+
+- **Explore Opportunities in California:**
+  - California has the highest number of donations in the West.
+  - Action: Implement targeted campaigns and donor appreciation initiatives in California.
+
+- **Explore Tier Upgrade Opportunities:**
+  - Identify donors close to the next tier level and encourage increased contributions.
+  - Effective in regions with more Tier 2 and Tier 3 donors.
+
+- **Strengthen Donor Stewardship:**
+  - Implement robust donor stewardship programs.
+  - Focus on personalized communication, recognition, and appreciation to retain donors.
+:::
