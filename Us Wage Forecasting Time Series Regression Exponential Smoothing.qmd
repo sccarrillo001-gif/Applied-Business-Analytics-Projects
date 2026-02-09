@@ -1,0 +1,803 @@
+---
+title: "Final Forecasting Report"
+subtitle: "A Time-Series Analysis of Average Hourly Earnings"
+author: "Gabriela Chajon"
+date: "12/10/2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  message: false
+  echo: false
+  include: true
+toc: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+```
+
+# [Business Understanding]{.underline}
+
+The Average Hourly Earnings of All Employees, Total Private series from the U.S. Bureau of Labor Statistics provides a key view into how wages are changing across the U.S. private sector. Because labor costs directly shape a company’s budget, pricing, and hiring decisions, understanding how wages will evolve over the next year is essential for strategic planning.\
+For this project, the “client” is a national human resources and finance team responsible for setting annual labor budgets, determining salary adjustments, and planning staffing needs. The series reports monthly, not seasonally adjusted average hourly earnings (in dollars per hour) for all private employees in the U.S. It is widely used by policymakers, businesses, and analysts to track wage pressures and labor cost trends over time.
+
+The models will be trained and validated on historical monthly data and then used to generate out-of-sample forecasts for the next 12 months. The client will use the preferred model’s forecast as input for labor cost planning.
+
+### **Research Questions:**
+
+-   What are the expected values of average hourly earnings for private-sector employees over the next 12 months, given the historical trend and any seasonal patterns in the CES series?
+
+-   Which approach provides more accurate short-term forecasts of average hourly earnings for budgeting and salary planning?
+
+### Loading libraries
+
+```{r, libraries}
+options(scipen=999)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(forecast)
+library(strucchange)
+library(Metrics)
+library(knitr)
+library(tibble)
+```
+
+# [Data Understanding]{.underline}
+
+### Previewing the Dataset
+
+```{r}
+earnings_data <- read.csv("earnings.csv")
+
+dim(earnings_data)
+head(earnings_data)
+tail(earnings_data)
+```
+
+### Renaming Columns and Converting Date Format
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+earnings <- earnings_data |>
+rename(
+Date = observation_date,
+Earnings = CEU0500000003
+) |>
+mutate(
+Date = as.Date(Date)
+) |>
+arrange(Date)
+
+head(earnings)
+summary(earnings$Earnings)
+
+```
+
+After renaming the variables and converting the date field into a proper date format, the dataset is now cleaned and structured for time-series analysis. Each row represents a single month of observed average hourly earnings for all private-sector employees in the United States, starting in March 2006.\
+
+The summary statistics indicate a clear upward trajectory over time, with average hourly earnings rising by more than 80% over the study period. The gap between the mean and median reflects the long right-tail caused by higher values in recent years as wages have grown. No extreme values appear in this summary, suggesting that the data does not contain obvious data-entry errors at this stage.
+
+### Create Monthly Time-Series Object
+
+```{r}
+start_year  <- year(min(earnings$Date))
+start_month <- month(min(earnings$Date))
+
+earnings_ts <- ts(
+earnings$Earnings,
+start = c(start_year, start_month),
+frequency = 12
+)
+
+earnings_ts
+
+```
+
+The earnings data were converted into a monthly time-series object beginning in March 2006 with a frequency of 12 observations per year. This structure allows the forecasting models to correctly recognize the ordering and spacing of the data.
+
+### Time Plot of the Series
+
+```{r}
+library(ggplot2)
+
+ggplot(earnings, aes(x = Date, y = Earnings)) +
+geom_line(linewidth = 0.8) +
+labs(
+title = "Average Hourly Earnings of All Employees, Total Private",
+x = "Date",
+y = "Dollars per Hour"
+) +
+theme_minimal()
+
+```
+
+The plot shows a strong upward trend, with wages rising steadily from 2006 to the present. For the most, no abrupt jumps or suspicious changes appear, except for a very small spike after 2020.
+
+### Histogram of Earnings
+
+```{r}
+ggplot(earnings, aes(x = Earnings)) +
+geom_histogram(bins = 30) +
+labs(
+title = "Distribution of Hourly Earnings",
+x = "Dollars per Hour",
+y = "Count"
+) +
+theme_minimal()
+
+```
+
+The distribution is right-skewed, meaning earlier years with lower earnings make up a larger share of the data, while higher wages appear less frequently because they occur only in the most recent observations.
+
+-   Most observations fall between \$20 and \$30 per hour, reflecting wage levels from roughly 2006 through the mid-2010s.
+
+-   Higher wage values (\$32–\$36+) appear less often, not because they are outliers but because they represent the newest months in the series.
+
+-   The smooth, gradual shift toward higher earnings over time reinforces the presence of a long-term upward trend, which both forecasting models will need to capture.
+
+Overall, the distribution confirms that wages have consistently risen over the past two decades and that the higher recent values represent normal economic progression
+
+### Missing Values Check
+
+```{r}
+sum(is.na(earnings$Earnings))
+
+# Check for Missing Months in Sequence
+
+full_dates <- seq(min(earnings$Date), max(earnings$Date), by = "month")
+missing_dates <- setdiff(full_dates, earnings$Date)
+missing_dates
+
+```
+
+The dataset has no missing values and no missing months
+
+### Outliers
+
+```{r}
+boxplot_stats_level <- boxplot.stats(earnings$Earnings)
+boxplot_stats_level$out
+
+```
+
+There are no unusually high or low values that would distort the forecast accuracy. Because no extreme or artificial values are present, no adjustments, winsorizing, or filtering were necessary at this stage.
+
+### Month-to-Month Change Calculation
+
+```{r}
+
+earnings <- earnings |>
+mutate(Change = Earnings - lag(Earnings))
+
+head(earnings, 10)
+
+#  Boxplot of Month-to-Month Changes
+
+ggplot(earnings, aes(x = 1, y = Change)) +
+geom_boxplot() +
+labs(
+title = "Boxplot of Monthly Earnings Changes",
+x = "",
+y = "Change in Dollars per Hour"
+) +
+theme_minimal()
+
+```
+
+-   Most monthly changes fall between –\$0.30 and +\$0.30, indicating that wages typically adjust in small, predictable increments.
+
+-   The median monthly change is close to zero, reflecting steady, moderate wage growth rather than abrupt month-to-month fluctuations.
+
+-   A few points appear slightly outside the main box, representing occasional larger increases or decreases; however, these movements align with real economic events like the 2020 labor market shifts
+
+-   No extreme spikes or collapses are present, confirming that earnings adjust smoothly and remain highly stable over time.
+
+### Seasonality: Month-of-Year Boxplot
+
+```{r}
+earnings <- earnings |>
+mutate(
+Month = month(Date, label = TRUE, abbr = TRUE),
+Year  = year(Date)
+)
+
+ggplot(earnings, aes(x = Month, y = Earnings)) +
+geom_boxplot() +
+labs(
+title = "Earnings by Month of Year",
+x = "Month",
+y = "Dollars per Hour"
+) +
+theme_minimal()
+
+```
+
+The month-of-year boxplot shows that average hourly earnings follow a very mild seasonal pattern. While there are small differences across months, the ranges largely overlap, and no month consistently stands out as unusually high or low.\
+
+April and May show slightly more spread in their earnings values compared to other months. This wider range suggests that these months have experienced somewhat greater variability over the years, though the effect remains modest and does not indicate a strong or recurring seasonal cycle.
+
+### Month-to-Month Changes Over Time
+
+```{r}
+ggplot(earnings, aes(x = Date, y = Change)) +
+geom_line() +
+labs(
+title = "Month-to-Month Change in Earnings",
+x = "Date",
+y = "Dollar Change"
+) +
+theme_minimal()
+
+```
+
+The month-to-month change plot shows that earnings typically move in small increments, with most changes falling between –\$0.30 and +\$0.30 per hour across nearly two decades. This confirms that wage adjustments tend to be gradual and stable over time.\
+
+A noticeable feature appears around 2020, where both a sharp increase and a sharp decrease occur within the short period of labor market disruptions during the pandemic.
+
+### Autocorrelation Plot
+
+```{r}
+
+acf(earnings_ts,
+main = "ACF of Average Hourly Earnings")
+
+```
+
+The autocorrelation plot shows very strong and persistent correlation between earnings values across many lags. The ACF starts close to 1.0 at lag 1 and declines only gradually, remaining well above the significance bands for a long stretch.
+
+This pattern indicates:
+
+-   A non-stationary series driven by a strong underlying upward trend.
+
+-   Seasonality is minimal, since the ACF does not display any repeating monthly spikes.
+
+-   Earnings today are highly dependent on earnings in prior months, reflecting steady wage growth.
+
+# [Data Preparation]{.underline}
+
+### Create training and validation partitions
+
+```{r}
+trainSet <- window(earnings_ts,
+end = time(earnings_ts)[length(earnings_ts) - 12])
+
+validationSet <- window(earnings_ts,
+start = time(earnings_ts)[length(earnings_ts) - 12 + 1])
+
+cat("trainSet has", length(trainSet), "observations.\n\n")
+cat("validationSet has", length(validationSet), "observations.\n\n")
+
+```
+
+The validation set contains 12 observations which means 12 months of data.This partition was done because using one full year ensures the models are evaluated across all months, capturing any mild seasonal effects as well as the underlying trend.
+
+### Visualize the partition
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+plot_df <- bind_rows(
+data.frame(Time = time(trainSet),
+Earnings = as.numeric(trainSet),
+Set = "Train"),
+data.frame(Time = time(validationSet),
+Earnings = as.numeric(validationSet),
+Set = "Validation")
+)
+
+ggplot(plot_df, aes(Time, Earnings, color = Set)) +
+geom_line(linewidth = 1) +
+geom_vline(xintercept = time(validationSet)[1], linetype = 2) +
+labs(title = "Average Hourly Earnings: Train vs. Validation Split",
+x = "Time", y = "Dollars per Hour") +
+theme_minimal()
+
+```
+
+The plot shows how the dataset was divided for forecasting:
+
+-   The **red** line represents the training period, which includes all historical observations up to the final year.
+
+-   The **blue** line represents the validation period—the most recent 12 months, separated by the dashed vertical line.
+
+The dataset shows a stable trajectory, making it strong for accurate forecasting. The strict separation of the validation set ensures that our final projections will be rigorously tested against actual recent market conditions.
+
+# [Modeling]{.underline}
+
+## MODEL 1: Regression with Trend and Seasonality
+
+```{r}
+library(forecast)
+
+RegModel <- tslm(trainSet ~ trend + season)
+summary(RegModel)
+```
+
+The regression model shows a very strong and statistically significant upward trend in average hourly earnings.
+
+**1. Trend Coefficient**
+
+-   The trend estimate is 0.062, meaning average hourly earnings increased by about 6.2 cents per month over the training period.
+
+-   This translates to roughly \$0.75 per year, which aligns closely with the long-term rise seen in the data from \$20 in 2006 to the mid-\$30s by 2025.
+
+-   The trend coefficient is highly significant (p \< 0.001), confirming that steady wage growth is the dominant force in this series.
+
+**2. Seasonal Coefficients**
+
+-   All monthly seasonal coefficients (season2–season12) are small in magnitude and not statistically significant (all p-values \> 0.4).
+
+-   Some months shows a tiny increase of cents, but none of these differences are meaningful.
+
+-   This confirms that while wages vary slightly from month to month, seasonality is minimal compared to the trend.
+
+The model explains about 94% of the variation in hourly earnings during the training period. (Adjusted R² ≈ 0.94), with a residual standard error of about \$1 per hour, showing that the model’s typical error in the training period is roughly one dollar per hour.The model passes the overall F-test (p \< 0.001), confirming that trend + seasonality together provide a meaningful explanation of the data.
+
+The regression model captures the movement in wages very well. However, the lack of strong seasonal effects and the magnitude of recent wage changes suggest that the model may react slowly when wage growth speeds up or slows down suddenly.
+
+## MODEL 2: Exponential Smoothing
+
+### Estimate Holt’s Exponential Smoothing Model
+
+```{r}
+AutoETS <- ets(trainSet)
+summary(AutoETS)
+```
+
+The model chosen was ETS(M,A,A), which includes a smooth upward trend and a very small seasonal pattern. This aligns well with the earnings data, which show steady growth and only mild month-to-month differences.
+
+The smoothing parameters indicate:
+
+-   α = 0.22: The model updates the level gradually, appropriate for stable wage growth.
+
+-   β = 0.025: The trend changes slowly, matching the long-term rise in earnings.
+
+-   γ = 0.0016: Seasonality is extremely small but still helpful for improving accuracy.
+
+The model fits the training data very well, with low errors (RMSE ≈ 0.14, MAPE ≈ 0.38%) and almost no bias. These results show that the model captures both the trend and the small seasonal effects effectively. Overall, ETS(M,A,A) provides an accurate and reliable structure for forecasting short-term wage movements, making it well-suited for budgeting and labor cost planning.
+
+# [Evaluation]{.underline}
+
+## MODEL 1: Regression with Trend and Seasonality
+
+### Forecast into the Validation Period
+
+```{r}
+nV <- length(validationSet)
+
+fRegModel <- forecast(RegModel, h = nV)
+fRegModel
+
+```
+
+The regression model projects a steady increase in hourly earnings across the validation period, with forecasts rising gradually from about \$32.8 in September 2024 to roughly \$33.3–\$33.5 by mid-2025.
+
+The forecast intervals are relatively narrow, suggesting that the model expects wage growth to remain stable and predictable based on past patterns. However, the regression model applies a long-term trend and only minimal seasonality, so it does not adjust quickly to wage changes.
+
+### Regression Forecast
+
+```{r}
+autoplot(fRegModel) +
+labs(
+title = "Regression Forecast for the Next 12 Months",
+x = "Year",
+y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+
+```
+
+The graph shows that the regression model continues the long-term upward trend in hourly earnings into the next 12 months.
+
+-   The model projects earnings to continue rising at a steady and predictable pace, consistent with the historical growth pattern observed over the past two decades.
+
+-   The regression trend smooths over those sharper recent increases, so it predicts earnings at the long-run rate instead of the new, faster pace so the forecast line ends up underestimating the actual earnings level.
+
+Overall, the visualization shows that the regression model produces a stable but conservative forecast, extending the long-term trend but not capturing smaller, more recent changes in wage movement.
+
+### Comparing Forecasted and Actual Values
+
+```{r}
+round(forecast::accuracy(fRegModel, validationSet), 4)
+
+```
+
+The regression model fits the historical data moderately well but performs poorly when forecasting the most recent 12 months.
+
+**Training**
+
+-   **RMSE ≈** 0.97 and MAE ≈ 0.84 indicate moderate error when estimating the historical (training) earnings values.
+
+-   **MAPE ≈** 3.17% shows acceptable accuracy for past observations.
+
+-   **ACF1 =** 0.97 reveals strong autocorrelation in the residuals, meaning the model is missing structure in the series.
+
+**Validation**
+
+-   **RMSE ≈** 2.75 and MAE ≈ 2.74 represent a sharp increase in forecasting error.
+
+-   **MAPE ≈** 7.62% indicates the model misses actual earnings by more than 7% on average.
+
+-   **ME ≈** 2.74 shows the model systematically underpredicts wages.
+
+-   **ACF1 =** 0.35 suggests the model does not fully capture recent patterns in wage movements.
+
+### Plot: Regression Actual vs Forecast (Validation Period)
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+reg_eval_df <- data.frame(
+date = seq(as.Date("2024-01-01"), by="month", length.out = length(validationSet)),
+actual = as.numeric(validationSet),
+forecast = as.numeric(fRegModel$mean)
+)
+
+ggplot(reg_eval_df, aes(x = date)) +
+geom_line(aes(y = actual), color = "black", size = 1.2) +
+geom_line(aes(y = forecast), color = "blue", size = 1.2) +
+labs(
+title = "Regression Model: Actual vs Forecast (Validation Period)",
+x = "Month",
+y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+```
+
+The plot shows that the regression model consistently underestimates average hourly earnings during the entire validation period. The actual earnings (black line) rise more quickly and remain well above the model’s forecasted values (blue line). This gap demonstrates that the regression model does not adjust to the stronger wage growth that occurred in year 2024.
+
+Overall, the plot highlights the regression model’s limited short-term forecasting ability and reinforces the accuracy issues observed in the validation metrics.
+
+## MODEL 2: Exponential Smoothing
+
+### Forecast into the Validation Period
+
+```{r}
+fESModel <- forecast(AutoETS, h = nV)
+fESModel
+```
+
+The forecast increases smoothly month to month, which matches the long-term upward trend in the data. The prediction intervals are tight, meaning the model is confident in these gradual increases.\
+
+### Plot: ETS Forecast
+
+```{r}
+autoplot(fESModel) +
+labs(
+title = "ETS (Holt) Forecast for the Next 12 Months",
+x = "Year",
+y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+```
+
+The ETS forecast extends the strong upward trend in hourly earnings into the next year, closely following the overall direction of the historical data. The model captures the long-term growth pattern and projects earnings to continue rising at a steady and gradual pace.\
+ompared to the regression model, the ETS approach produces a smoother and more adaptive forecast that better reflects the recent acceleration in wage growth.
+
+### Compare Forecasted and Actual Values
+
+```{r}
+round(forecast::accuracy(fESModel, validationSet), 4)
+
+```
+
+The ETS model shows strong performance on both the training data and the validation period, indicating that it effectively captures the underlying structure of hourly earnings.
+
+**Training Performance**
+
+-   RMSE ≈ 0.14 and MAE ≈ 0.10 indicate very small errors when fitting historical values.
+
+-   MAPE ≈ 0.38% shows the model predicts past earnings with extremely high accuracy.
+
+-   ACF1 = 0.11 suggests little autocorrelation in the residuals, meaning the model explains most of the important patterns in the data.
+
+**Validation (Test) Performance**
+
+-   RMSE ≈ 0.13 and MAE ≈ 0.11 reflect excellent forecast accuracy for the validation period.
+
+-   MAPE ≈ 0.31% indicates that forecast errors are, on average, less than one-third of one percent—very strong performance for wage forecasting.
+
+-   ME ≈ 0.05 shows the model is nearly unbiased, with only a slight tendency to underpredict.
+
+-   ACF1 = 0.03 confirms that forecast errors behave like random noise, indicating a well-specified model.
+
+-   Theil’s U = 0.86 is below 1, meaning the ETS model outperforms a naïve benchmark forecast.
+
+### Plot: ETS Actual vs Forecast (Validation Period)
+
+```{r}
+ets_eval_df <- data.frame(
+date = seq(as.Date("2024-01-01"), by="month", length.out = length(validationSet)),
+actual = as.numeric(validationSet),
+forecast = as.numeric(fESModel$mean)
+)
+
+ggplot(ets_eval_df, aes(x = date)) +
+geom_line(aes(y = actual), color = "black", size = 1.2) +
+geom_line(aes(y = forecast), color = "red", size = 1.2) +
+labs(
+title = "ETS Model: Actual vs Forecast (Validation Period)",
+x = "Month",
+y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+```
+
+The model successfully identifies the overall upward trend in Average Hourly Earnings, but it does not always match the exact month-to-month movements. In periods where wages rise more quickly, the forecast tends to respond more cautiously, resulting in mild under-prediction. Later in the year, the model slightly over-corrects before realigning with the true values.
+
+Around April 2024, the actual earnings spiked sharply. The forecast rose as well, but at a more conservative, linear rate. The model was too "smooth" during this period. It failed to react quickly enough to the accelerated growth in wages.
+
+## Model Selection
+
+### Side-by-Side Comparison: Regression vs ETS
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+# Actual data
+
+actual_val <- data.frame(
+date = seq(as.Date("2024-01-01"), by = "month", length.out = length(validationSet)),
+Earnings = as.numeric(validationSet),
+Type = "Actual"
+)
+
+# Regression forecast
+
+reg_plot_df <- data.frame(
+date = actual_val$date,
+Earnings = as.numeric(fRegModel$mean),
+Type = "Forecast (Regression)"
+)
+
+# ETS forecast
+
+ets_plot_df <- data.frame(
+date = actual_val$date,
+Earnings = as.numeric(fESModel$mean),
+Type = "Forecast (ETS)"
+)
+
+# Regression plot
+
+p1 <- ggplot() +
+geom_line(data = actual_val, aes(date, Earnings), color = "black", size = 1.2) +
+geom_line(data = reg_plot_df, aes(date, Earnings), color = "blue", size = 1.2) +
+labs(
+title = "Regression Model: Actual vs Forecast",
+x = "Month", y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+# ETS plot
+
+p2 <- ggplot() +
+geom_line(data = actual_val, aes(date, Earnings), color = "black", size = 1.2) +
+geom_line(data = ets_plot_df, aes(date, Earnings), color = "red", size = 1.2) +
+labs(
+title = "ETS Model: Actual vs Forecast",
+x = "Month", y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+p1 + p2
+
+```
+
+The **regression model** consistently under-predicts earnings, with its forecast line remaining well below the actual values throughout the entire validation period. This indicates that the regression approach does not adjust to the faster wage growth seen in 2024.
+
+In contrast, the **ETS** model closely follows the actual earnings path. Although it shows small month-to-month deviations, the forecast generally stays aligned with the true values and responds more effectively to changes in wage growth.
+
+### Accuracy-Based Comparison
+
+```{r}
+# Validation accuracy for each model
+acc_reg <- forecast::accuracy(fRegModel, validationSet)
+acc_es  <- forecast::accuracy(fESModel, validationSet)
+
+acc_table <- rbind(
+  Regression = acc_reg["Test set", c("RMSE", "MAE", "MAPE", "ME")],
+  ETS_Holt   = acc_es["Test set",  c("RMSE", "MAE", "MAPE", "ME")]
+)
+
+knitr::kable(
+  round(acc_table, 4),
+  caption = "Validation Accuracy: Regression vs ETS (Holt)"
+)
+```
+
+The validation accuracy metrics strongly favor the ETS model over the regression model. The ETS model produces dramatically smaller errors across all measures:
+
+-   RMSE: 0.13 for ETS vs. 2.75 for the regression model
+
+-   MAE: 0.11 for ETS vs. 2.74 for the regression model
+
+-   MAPE: 0.31% for ETS vs. 7.62% for the regression model
+
+-   ME: 0.05 for ETS vs. 2.74 for the regression model
+
+These results show that the regression model consistently under predicts wages and performs poorly in short-term forecasting. In contrast, the ETS model delivers highly accurate and nearly unbiased forecasts, confirming that it adapts much better to recent wage growth.
+
+# [Deployment]{.underline}
+
+### **Refit the chosen model (ETS/Holt) on the FULL series and Forecast the NEXT 12 MONTHS**
+
+```{r}
+FinalETS <- ets(earnings_ts, model = "AAN")  # or ets(earnings_ts) if you let it choose
+summary(FinalETS)
+
+
+final_fcst <- forecast(FinalETS, h = 12)
+final_fcst
+```
+
+The table shows the model’s projected average hourly earnings for the next year, along with uncertainty ranges.
+
+-   **Point Forecast:** The best estimate for each month. Earnings are expected to rise steadily from \$36.49 (Sep 2025) to \$37.65 (Aug 2026)—an increase of about 10–12 cents per month.
+
+-   **80% & 95% Intervals:** These ranges show where the actual values are likely to fall. The 80% interval is tighter, reflecting typical uncertainty while the 95% interval is wider but still narrow overall, indicating a stable and predictable wage trend.
+
+The model anticipates continued, steady wage growth over the next 12 months with high confidence and no major fluctuations expected.
+
+### Future dates for the next 12 months
+
+```{r}
+
+last_date <- max(earnings$Date)
+
+future_dates <- seq(
+from = last_date %m+% months(1),
+by   = "month",
+length.out = 12
+)
+
+final_fcst_df <- data.frame(
+  Date          = future_dates,
+  PointForecast = round(as.numeric(final_fcst$mean), 2),
+  Lo80          = round(final_fcst$lower[,1], 2),
+  Hi80          = round(final_fcst$upper[,1], 2),
+  Lo95          = round(final_fcst$lower[,2], 2),
+  Hi95          = round(final_fcst$upper[,2], 2)
+)
+
+knitr::kable(
+  final_fcst_df,
+  caption = "Final ETS Forecast – Next 12 Months"
+)
+
+```
+
+The final ETS model projects steady wage growth over the next year. Average hourly earnings are expected to rise from \$36.49 in September 2025 to \$37.65 by August 2026, reflecting consistent monthly increases.\
+
+The 80% and 95% confidence intervals remain narrow throughout the forecast horizon, indicating high model certainty and a stable underlying trend. Even at the widest ranges, the forecast suggests earnings will remain firmly within the \$36.1 to \$38.4 range over the next year.
+
+### Plot - dates for the next 12 months
+
+```{r}
+autoplot(final_fcst) +
+labs(
+title = "Final ETS/Holt Forecast – Next 12 Months",
+x = "Year",
+y = "Average Hourly Earnings (USD)"
+) +
+theme_minimal()
+
+```
+
+The plot shows the full historical trajectory of U.S. private-sector hourly earnings alongside the ETS model’s 12-month forecast. The historical series displays a long-term, steady upward trend, with only brief interruptions such as the 2020 spike.\
+
+The forecast for September 2025 through August 2026 continues this smooth growth pattern. The shaded bands represent 80% and 95% confidence intervals, and their narrow width indicates high model certainty and stable wage dynamics.\
+
+The forecast line begins around \$36.50 and rises to approximately \$37.65 by August 2026, reinforcing that wages are expected to grow slowly and predictably over the coming year. Because the model is trained on the full dataset, it fully incorporates the most recent wage behavior and provides a reliable basis for labor-cost planning and budget decisions.
+
+## Summary of Findings
+
+-   The regression model systematically under-predicted wages, especially in the final validation period, showing that earnings increased more quickly in 2024 than the historical trend alone would suggest. This became clear when comparing forecasts to actual values, showing that wage growth has recently accelerated beyond the long-run pattern captured by the regression model.
+
+-   The ETS/Holt model delivered substantially stronger forecasting accuracy (validation RMSE ≈ 0.13 vs. 2.75 for regression). Its ability to adapt to gradual, ongoing changes in the series allowed it to closely track month-to-month wage movements. This confirms that the current wage environment follows a smooth, incremental growth pattern, which is better suited to exponential smoothing than to trend-seasonality regression.
+
+-   While the regression model explains long-term wage growth well (Adjusted R² ≈ 0.94), it lacks the short-term responsiveness needed for operational forecasting. The model’s trend-only structure does not capture the more recent acceleration in wages, leading to systematic under-estimation and higher forecast error.
+
+-   The ETS model’s performance indicates no strong seasonal component in the data, which validates earlier exploratory findings. Wages do not follow a pronounced month-to-month seasonal cycle; instead, they rise gradually over time. Because exponential smoothing does not depend on seasonal binaries, it aligns more closely with the true behavior of the series.
+
+-   Overall, the results indicate that U.S. wage growth is steady but accelerating modestly, and forecasting methods must adapt to these more recent patterns. Models that assume fixed historical patterns—like regression with fixed seasonal effects—are less suited for short-term operational forecasting in this environment.
+
+### Research Questions
+
+**What are the expected values for the next 12 months?**
+
+Expected earnings are projected to increase steadily, rising approximately \$1.15 over the next year, consistent with long-term wage growth patterns.
+
+The forecast intervals remain narrow across all months, with the 95% confidence ranges typically spanning only \$0.30–\$0.45, indicating a high degree of forecast stability. These results suggest that wage growth is expected to continue at a gradual, predictable pace, with no signs of volatility or structural shifts over the upcoming year.
+
+**Which model is better for forecasting?**
+
+The ETS/Holt model demonstrates substantially stronger forecasting performance than the regression model. During the validation period, Holt’s method achieved:
+
+-   RMSE: 0.13 compared to 2.75 for regression
+
+-   MAPE: 0.31% compared to 7.62% for regression
+
+-   ME: near zero (0.05), indicating minimal bias
+
+In contrast, the regression model systematically underpredicted wages, by almost \$3 per month on average, because it assumes a fixed linear trend and fixed seasonal pattern. These components did not reflect the more recent acceleration in wage growth seen in recent years.
+
+The ETS/Holt model updates the level and trend each month, allowing it to adjust quickly to changes in the data. Because it follows the smooth, steady growth pattern in earnings, it produces much lower errors and more dependable short-term forecasts. Given these findings, the ETS/Holt model provides the most accurate and responsive approach for forecasting monthly wage levels over the next year.
+
+## Limitations
+
+When using these forecasts for planning, it’s important to recognize a few limitations. The ETS/Holt model works best when wage growth remains steady, so forecasts may become less reliable if the labor market experiences sudden shifts, new regulations, or unexpected economic events. Because the analysis uses national wage data, it may not fully reflect conditions in specific industries or regions where the client operates. In addition, the model adjusts gradually to sharp changes, meaning rapid wage increases may take time to appear in the projections. For these reasons, the forecasts should support planning decisions but should not replace ongoing monitoring of wage trends or internal compensation data.
+
+## Business Recommendations
+
+1.  **Use the ETS/Holt model for short-term labor cost planning and monthly budgeting**\
+
+    Validation results showed that this model reduced forecast errors dramatically (RMSE ≈ 0.13 vs. 2.75 for regression). Its ability to track the smooth, month-to-month increases in wages makes it the most reliable tool for planning next-month payroll costs, setting salary adjustment expectations, and preparing for seasonal hiring cycles. Update and re-fit the ETS model monthly because its accuracy depends on staying up-to-date with evolving wage patterns.
+
+2.  **Retrain the forecasting model monthly as new wage data is released**
+
+    Recent years (especially 2023–2024), as we discovered in the report, showed periods of faster wage growth. If the model is updated it each month, it ensures forecasts stay aligned with the latest labor-market conditions. Because the ETS/Holt model adapts well to new information, retraining the model helps reducing budgeting risk and maintain accurate salary and payroll planning throughout the year.
+
+3.  **Adjust pricing, service rates, or contract bids based on expected labor cost increases**
+
+    The strong short-term accuracy of the ETS/Holt model allows organizations to anticipate cost adjustments before they occur. Anticipated wage increases could be incorporated into pricing models for industries where labor represents a significant share of operating costs, businesses like healthcare, construction or manufacturing. Forecast-based negotiation strengthens financial positioning and prevents unexpected increases from disrupting budgets.
+
+4.  **Monitor for trend accelerations and structural shifts in wages**
+
+    During validation, the regression model significantly underpredicted wages, revealing that the normal trend had recently accelerated. Organizations should need to monitor wage data to detect similar shifts. This reinforces the importance of dynamic forecasting rather than relying on static historical trends.
+
+5.  **Avoid relying on seasonal adjustments for wage planning**
+
+    The analysis found minimal seasonal variation in hourly earnings, and seasonal coefficients in the regression model were statistically insignificant. This means wages do not follow predictable seasonal patterns. Budgeting then should be based on trend-driven, month-to-month updates instead of assumptions about seasonal wage changes.
+
+# [References]{.underline}
+
+## Data Source
+
+U.S. Bureau of Labor Statistics, *Average Hourly Earnings of All Employees, Total Private* \[Data set\], retrieved from FRED, Federal Reserve Bank of St. Louis; https://fred.stlouisfed.org/series/CEU0500000003
+
+## R Software
+
+R Core Team. (2024). *R: A language and environment for statistical computing* (Version 4.5.1) \[Computer software\]. R Foundation for Statistical Computing. https://www.r-project.org/
+
+## R Packages
+
+Grolemund, G., & Wickham, H. (2024). *lubridate: Make dealing with dates a little easier* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=lubridate
+
+Hamner, B., & Frasco, M. (2024). *Metrics: Evaluation metrics for machine learning* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=Metrics
+
+Hyndman, R. J., & Athanasopoulos, G. (2024). *forecast: Forecasting functions for time series and linear models* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=forecast
+
+Müller, K., & Wickham, H. (2024). *tibble: Simple data frames* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=tibble
+
+OpenAI. (2025). *ChatGPT (GPT-5.1 version)* \[Large language model\]. https://chat.openai.com (The model was used to assist with portions of code generation. All outputs were reviewed and finalized by the author.)
+
+Pedersen, T. L. (2024). *patchwork: The composer of plots* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=patchwork
+
+Wickham, H. (2016). *ggplot2: Elegant graphics for data analysis* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=ggplot2
+
+Wickham, H., François, R., Henry, L., & Müller, K. (2024). *dplyr: A grammar of data manipulation* [R package]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=dplyr
+
+Wickham, H., Hester, J, & Bryan, J. (2024). *readr: Read rectangular text data* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=readr
+
+Xie, Y. (2024). *knitr: A general-purpose package for dynamic report generation in R* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=knitr
+
+Zeileis, A., et al. (2024). *strucchange: Testing for structural change in linear regression models* \[R package\]. Comprehensive R Archive Network (CRAN). https://CRAN.R-project.org/package=strucchange
+
+***End of Report***
