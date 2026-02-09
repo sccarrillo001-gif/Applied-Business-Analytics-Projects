@@ -1,0 +1,447 @@
+---
+title: "LAB 12: Forecasting"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+    toc: true
+execute:
+  warning: false
+  messages: false
+  echo: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+```
+
+# Business Understanding
+The client requests monthly forecasts of U.S. retail sales for sporting goods, hobby, musical instrument, and book stores for August–December 2025.
+These forecasts will support inventory planning, staffing, and assessing post-COVID consumer shifts.
+
+### Loading libraries
+```{r}
+options(scipen=999)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(forecast)
+library(strucchange)
+library(Metrics)
+library(knitr)
+library(tibble)
+```
+
+# Data Understanding
+```{r}
+fred <- read_csv("LAB_12.csv", show_col_types = FALSE) %>%
+rename(
+date  = observation_date,
+sales = MRTSSM451USN
+) %>%
+mutate(
+date  = as.Date(date),
+year  = year(date),
+month = month(date)
+) %>%
+arrange(date)
+
+head(fred)
+tail(fred)
+summary(fred$sales)
+
+```
+```{r}
+# Create monthly time series object
+
+start_year  <- min(fred$year)
+start_month <- min(fred$month)
+
+sales_ts <- ts(
+fred$sales,
+start     = c(start_year, start_month),
+frequency = 12
+)
+
+autoplot(sales_ts) +
+labs(
+title = "Monthly Retail Sales: Sporting Goods, Hobby, Musical Instrument, and Book Stores",
+x = "Year",
+y = "Sales (Millions of $)"
+) +
+theme_minimal()
+
+```
+Average monthly sales have grown from roughly $2.5–3.0 billion in the early years to around $7–9 billion in recent years. The time series also exhibits strong seasonality, with very sharp spikes every year during the holiday period (roughly November–December).The summary statistics confirm this pattern: monthly sales range from about $2.5 billion (min = 2,534) up to about $12.0 billion (max = 12,025), with a mean around $6.0 billion and median around $5.9 billion. This indicates a right-skewed distribution driven by those very high holiday months.
+
+# Data Preparation
+```{r}
+# Bai-Perron breakpoints on the full series
+
+bp <- breakpoints(sales_ts ~ 1)
+plot(bp)
+
+breakdates(bp)
+confint(bp)
+
+```
+The Bai–Perron test suggests three main structural breaks in the series, around 1997, 2004, and 2020. The earlier two breaks reflect level and seasonality shifts as the category expanded over time, while the 2020 break clearly aligns with the COVID-19 shock, where sales drop sharply and then rebound.
+
+### COVID structural break (Chow test)
+```{r}
+covid_start_date <- as.Date("2020-03-01")
+covid_point      <- which(fred$date == covid_start_date)
+
+chow_test <- sctest(sales_ts ~ 1, type = "Chow", point = covid_point)
+chow_test
+
+```
+The Chow test for a structural break at March 2020 is highly significant (F = 101.91, p-value ≈ 0). This strongly rejects the null of “no break,” confirming that the behavior of retail sales changed sharply at the onset of COVID-19. This supports modeling COVID explicitly with a dummy variable instead of assuming one stable structure over the entire sample.
+
+### Create COVID dummy
+```{r}
+fred <- fred %>%
+mutate(
+covid = if_else(
+date >= as.Date("2020-03-01") & date <= as.Date("2021-12-01"),
+1, 0
+)
+)
+
+table(fred$covid)
+
+```
+Out of 403 total observations, 22 months fall inside the COVID window and are coded as 1, while 381 months are non-COVID (coded 0). This confirms the period is short but impactful
+
+### Define modeling period and align series
+```{r}
+model_start_year  <- 2010   # adjust if your breakpoints suggest a different recent regime
+model_start_month <- 1
+
+sales_mod_ts <- window(
+sales_ts,
+start = c(model_start_year, model_start_month)
+)
+
+covid_ts <- ts(
+fred$covid,
+start     = c(start_year, start_month),
+frequency = 12
+)
+
+covid_mod_ts <- window(
+covid_ts,
+start = c(model_start_year, model_start_month)
+)
+
+autoplot(sales_mod_ts) +
+labs(
+title = "Modeling Period: Retail Sales (2010–2025)",
+x = "Year",
+y = "Sales (Millions of $)"
+) +
+theme_minimal()
+
+```
+The modeling window beginning in 2010 shows a stable and relevant recent regime for forecasting. The series displays a clear upward level shift compared to earlier decades and strong, regular seasonality. Importantly, the period immediately before COVID is preserved, and the COVID shock is visible but isolated
+
+```{r}
+reg_ts <- cbind(
+Sales = sales_mod_ts,
+Covid = covid_mod_ts
+)
+
+head(reg_ts)
+tail(reg_ts)
+
+```
+The dataset begins in 2010 with stable pre-COVID sales and Covid = 0.
+The final rows (Feb–Jul 2025) show higher sales levels and still Covid = 0, confirming the series has fully returned to a normal post-COVID pattern.
+
+# Modeling 
+```{r}
+cv_years <- 2017:2024   # validation years
+cv_results_A <- tibble()
+cv_results_B <- tibble()
+
+for (vy in cv_years) {
+
+# Training: from model_start_year up to year before validation year
+
+train_ts <- window(
+reg_ts,
+start = c(model_start_year, model_start_month),
+end   = c(vy - 1, 12)
+)
+
+# Validation: the full validation year
+
+val_ts <- window(
+reg_ts,
+start = c(vy, 1),
+end   = c(vy, 12)
+)
+
+train_sales <- train_ts[, "Sales"]
+train_covid <- train_ts[, "Covid"]
+val_sales   <- val_ts[, "Sales"]
+val_covid   <- val_ts[, "Covid"]
+nV          <- length(val_sales)
+
+# --- Model A: trend + season (no COVID dummy)
+
+modelA <- tslm(train_sales ~ trend + season)
+fcstA  <- forecast(modelA, h = nV)
+accA   <- forecast::accuracy(fcstA, val_sales)
+
+cv_results_A <- bind_rows(
+cv_results_A,
+tibble(
+Fold_Year = vy,
+RMSE      = accA[2, "RMSE"],
+MAPE      = accA[2, "MAPE"]
+)
+)
+
+# --- Model B: trend + season + COVID dummy
+
+# Use the multivariate ts object so tslm sees Sales, Covid, trend, and season
+
+train_df <- train_ts
+modelB   <- tslm(Sales ~ trend + season + Covid, data = train_df)
+
+newdataB <- data.frame(
+Covid = as.numeric(val_covid)
+)
+
+fcstB <- forecast(modelB, h = nV, newdata = newdataB)
+accB  <- forecast::accuracy(fcstB, val_sales)
+
+cv_results_B <- bind_rows(
+cv_results_B,
+tibble(
+Fold_Year = vy,
+RMSE      = accB[2, "RMSE"],
+MAPE      = accB[2, "MAPE"]
+)
+)
+}
+
+kable(cv_results_A, digits = 2,
+caption = "Model A (Trend + Season) – Expanding Window CV Results")
+
+kable(cv_results_B, digits = 2,
+caption = "Model B (Trend + Season + COVID Dummy) – Expanding Window CV Results")
+
+avgA_RMSE <- mean(cv_results_A$RMSE)
+avgA_MAPE <- mean(cv_results_A$MAPE)
+
+avgB_RMSE <- mean(cv_results_B$RMSE)
+avgB_MAPE <- mean(cv_results_B$MAPE)
+
+cat("Model A Average RMSE: ", round(avgA_RMSE, 2), "\n")
+cat("Model A Average MAPE (%): ", round(avgA_MAPE * 100, 2), "\n\n")
+
+cat("Model B Average RMSE: ", round(avgB_RMSE, 2), "\n")
+cat("Model B Average MAPE (%): ", round(avgB_MAPE * 100, 2), "\n")
+
+```
+Across the 2017–2024 folds, Model A (trend + season) has lower average error than Model B.\
+
+The two models perform similarly in the early years and around 2020, but Model B is generally less accurate in the post-COVID folds (especially 2022–2023). Because Model A has lower average RMSE and MAPE over all folds, it is the preferred regression specification for forecasting August–December 2025.
+
+### FInal Regression Model and Forecast for Aug–Dec 2025
+```{r}
+final_end_year  <- 2025
+final_end_month <- 7  # July 2025
+
+sales_final_ts <- window(
+sales_ts,
+start = c(model_start_year, model_start_month),
+end   = c(final_end_year, final_end_month)
+)
+
+covid_final_ts <- window(
+covid_ts,
+start = c(model_start_year, model_start_month),
+end   = c(final_end_year, final_end_month)
+)
+
+reg_final_ts <- cbind(
+Sales = sales_final_ts,
+Covid = covid_final_ts
+)
+
+tail(reg_final_ts)
+
+```
+```{r}
+final_reg_model <- tslm(Sales ~ trend + season + Covid, data = reg_final_ts)
+summary(final_reg_model)
+
+```
+The final regression model fits the data well, with an R² of 0.846, meaning it explains about 85% of the variation in monthly sales.
+
+- Trend is positive and highly significant (p < 0.001), indicating steady long-term growth in retail sales.
+- The seasonal coefficients show strong, predictable seasonality, especially large spikes in November and December (holiday spending).
+- The COVID dummy is not statistically significant (p = 0.49), which is expected because COVID shocks were temporary and the long-term seasonality + trend already capture most of the pattern.
+- The residuals are centered and the error size (~614) is consistent with the CV results.
+
+```{r}
+h <- 5  # Aug–Dec 2025
+
+future_covid <- data.frame(
+Covid = rep(0, h)
+)
+
+reg_fcst <- forecast(final_reg_model, h = h, newdata = future_covid)
+reg_fcst
+
+autoplot(reg_fcst) +
+labs(
+title = "Regression Forecast: Aug–Dec 2025",
+x = "Year",
+y = "Sales (Millions of $)"
+) +
+theme_minimal()
+
+```
+The regression model projects sales to stay in the $7.4–8.8 billion range for Aug–Nov 2025, with the usual seasonal dip in September and a pickup in November. As expected, December 2025 is the strongest month, with a forecast of about $11.8 billion and a 95% interval roughly between $10.5 and $13.0 billion, reflecting the typical holiday spike. Overall, the forecast continues steady growth on top of strong year-end seasonality.
+
+# Modeling – Smoothing
+```{r}
+sales_smooth_ts <- window(
+  sales_ts,
+  start = c(model_start_year, model_start_month),
+  end   = c(final_end_year, final_end_month)
+)
+
+autoplot(sales_smooth_ts) +
+  labs(
+    title = "Series Used for Smoothing Models (2010–2025)",
+    x = "Year", 
+    y = "Sales (Millions USD)"
+  ) +
+  theme_minimal()
+```
+
+
+## ETS model selection
+```{r}
+# Fit automatic ETS model (ZZZ searches for best structure)
+smooth_fit <- ets(sales_smooth_ts)
+
+summary(smooth_fit)
+
+# Extract model code safely (e.g., "ETS(A,N,A)" → "ANA")
+ets_code <- smooth_fit$model
+ets_code
+
+
+```
+The automatic ETS procedure selected an ETS(A,N,A) model: additive error, no trend, additive seasonality. This means the model treats the series as having a stable level plus a repeating seasonal pattern, without a strong linear trend over the 2010–2025 window. The smoothing parameters (α ≈ 0.44, γ ≈ 0) indicate that the level is updated moderately over time, while the seasonal pattern is very stable. In-sample fit is good, with RMSE ≈ 420 and MAPE ≈ 4.1%, which is reasonable error for monthly retail sales on the order of $6–10 billion.
+
+### Final ETS Forecast (Aug–Dec 2025)
+```{r}
+smooth_fcst <- forecast(smooth_fit, h = 5)
+smooth_fcst
+
+autoplot(smooth_fcst) +
+  labs(
+    title = "ETS/Holt–Winters Forecast: Aug–Dec 2025",
+    x = "Year",
+    y = "Sales (Millions USD)"
+  ) +
+  theme_minimal()
+
+
+```
+The ETS model predicts that sales from August to November 2025 will fall in the $7.4–8.8 billion range, closely following the typical seasonal pattern.The ETS forecast is smooth and closely aligned with the long-term seasonal cycle, reinforcing that seasonality is the dominant driver of future sales.
+
+# Evaluation
+
+### Validation
+
+```{r}
+train_s <- window(sales_smooth_ts, end = c(2023, 12))
+
+val_s <- fred %>%
+  filter(year == 2024) %>%
+  pull(sales) %>%
+  as.numeric()
+
+val_s <- ts(val_s, start = c(2024, 1), frequency = 12)
+
+# Fit ETS on training (NO model argument)
+smooth_eval_fit <- ets(train_s)
+
+# Forecast 2024
+smooth_eval_fcst <- forecast(smooth_eval_fit, h = 12)
+
+# Accuracy: convert to numeric vectors
+smooth_pred_vec <- as.numeric(smooth_eval_fcst$mean)
+smooth_act_vec  <- as.numeric(val_s)
+
+smooth_acc <- accuracy(smooth_pred_vec, smooth_act_vec)
+smooth_acc
+
+```
+
+
+# Deployment
+```{r}
+reg_fcst_df <- tibble(
+Month    = seq(as.Date("2025-08-01"), by = "1 month", length.out = 5),
+Forecast = as.numeric(reg_fcst$mean)
+)
+
+kable(
+reg_fcst_df,
+digits = 0,
+col.names = c("Month", "Forecast Sales (Millions of $)"),
+caption = "Preferred Model Forecast – Aug–Dec 2025"
+)
+
+```
+- Sales hold between $7.4B–8.8B from August through November.
+
+- December 2025 is the peak month, with a forecast of $11.8B, consistent with historical holiday surges.\
+
+These final values provide the client with clear, month-specific projections to support inventory purchases, staffing planning, and holiday season preparations.
+
+## Insights and Recommendations
+- The series shows very strong seasonality, with December consistently being the highest-sales month every year.
+
+- There is a gradual upward trend in sales from 2010–2025, meaning the market for sporting goods, hobby, and book stores continues to grow slowly over time.
+
+- The COVID-19 period (2020–2021) created a sharp but temporary drop. However, the post-COVID recovery is clear, and by 2022 sales returned to the usual seasonal pattern.
+
+- Both the regression model and ETS model show almost identical forecasts, which increases confidence in the projected values.
+
+#### Main Model Recommendations
+
+- Use the regression model (trend + season) as the primary forecasting tool.
+It performed better in cross-validation than the COVID-adjusted model.
+
+- Update the model quarterly as new data arrives (especially after December 2025).
+Retail sales are seasonal but can shift due to economic trends.
+
+- Consider adding marketing variables (promotions, ad spending, major campaigns) in future models when data is available to improve accuracy.
+ 
+- Re-run ETS/Holt-Winters periodically. Because even though regression was slightly better, ETS provides a strong seasonal baseline and is useful as a secondary model.
+
+#### Marketing & Sales Recommendations
+
+- Heavily invest in holiday campaigns (November–December).
+With December forecasted at $11.8B, this is the biggest opportunity for promotions and a lot of marketing campaigns
+
+- Use loyalty programs or repeat buyer campaigns in August–September to keep the slower months from dropping too low as we saw in the model
+
+- Stock up by late October in preparation for the November–December spike in data and reduce inventory  after January  because seasonal sales go down, so inventory levels should adjust to both changes
+
+
+
+

@@ -1,0 +1,509 @@
+---
+title: "LM 6 LAB: CLASSIFICATION TREES"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: false
+toc-location: left
+number-sections: false
+editor: source
+---
+
+# BUSINESS UNDERSTANDING
+
+Derek Anderson is an institutional researcher at a major university. The university has set a goal to increase the number of first-year freshmen students who graduate within four years by 20% in five years. Derek is asked by his boss to create a model that would flag any freshmen student who has a high likelihood of not being able to graduate within four years to help with early intervention.
+
+He has compiled a data set of 2,000 previous freshmen students of the university that contains the following variables:\
+\* sex (M/F)\
+\* whether the student is Caucasian (White)\
+\* high school GPA (HS GPA)\
+\* SAT score (SAT)\
+\* whether the student’s parents are college educated (College Parent)\
+\* whether the student graduated within four years (Grad) -- dependent variable
+
+He also has a dataset of 3 incoming freshmen for which he'd like you to predict whether they would graduate in 4 years.
+
+# DATA UNDERSTANDING
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+#Load libraries
+library(readxl)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(pROC)
+library(tidyr)
+```
+
+```{r}
+library(readxl)
+myData <- read_excel("LAB_6.xlsx",sheet = "Graduate_Data")
+myScoreData <- read_excel("LAB_6.xlsx",sheet = "Graduate_Score")
+
+myData %>% head(3)			
+myData %>% tail(3)	
+```
+
+# DATA PREPARATION
+
+# Drop college GPA column
+
+```{r}
+myData <- myData %>% select(-GPA)
+myScoreData <- myScoreData %>% select(-GPA)
+myData %>% head(3)			
+myData %>% tail(3)	
+```
+
+We removed the GPA column from the dataset because college GPA is not known for incoming freshmen and cannot be used for early prediction. This ensures the model only uses information available at enrollment (sex, White, HS GPA, SAT, College Parent) to predict graduation outcomes. A quick check of the first and last rows confirmed the column was successfully removed. \## Skinny EDA
+
+```{r}
+library(DataExplorer)
+plot_bar(myData)
+plot_histogram(myData)
+
+cat("\n\nDepvar Proportion: Admitted")
+prop.table(table(myData$Grad))
+```
+
+We visualized the distribution of the predictor variables using bar charts and histograms. The analysis shows:
+
+Sex: About 1,100 male and 900 female students.
+
+Race (White): Roughly 1,350 students are White, and around 650 are not.
+
+College-educated parents: More than half of the students have parents with a college degree.
+
+Graduation (Grad): Approximately 69% of students graduated within four years (Grad = 1), while 31% did not (Grad = 0).
+
+This confirms a moderately imbalanced dataset, with non-graduates as the minority class, which we target for early intervention.
+
+Continuous Variable Distributions (HS GPA and SAT Scores):
+
+HS GPA: Ranges from 0 to 4.0 and is heavily right-skewed. Most students (peak around 3.7–4.0) have high GPAs, with very few below 2.5, indicating a high-achieving student population.
+
+SAT Scores: Ranges from 0 to 1600 and shows a moderately right-skewed distribution. Most scores cluster between 1000–1400, with a peak around 1200–1300. Very low (\<800) or perfect scores (1600) are rare.
+
+## Dimensions
+
+```{r, dimensions}
+summary(myData)
+cat("Graduate data dimensions:"); dim(myData)
+```
+
+The dataset has 2,000 students and 6 variables. Most students are high-achieving: median HS GPA 3.9, median SAT 1270, and \~68% have college-educated parents.
+
+## Heatmap
+
+```{r}
+# Select numeric variables
+numeric_vars <- myData %>% select(where(is.numeric))
+
+# Correlation matrix
+cor_matrix <- cor(numeric_vars)
+
+# Or using DataExplorer
+plot_correlation(numeric_vars)
+
+```
+
+HS GPA has the strongest correlations with SAT (0.35) and Grad (0.28), suggesting that higher high school performance metrics are linked to graduating.
+
+Whether a student has a college-educated parent is not linearly associated with their high school GPA, SAT score, race (White), or their eventual graduation status (Grad), in this specific dataset.
+
+White is only weakly correlated with other variables, suggesting that racial group, as a variable, is relatively independent of academic metrics and graduation in this dataset.
+
+## Outliers
+
+```{r}
+library(dlookr)
+dlookr::diagnose_outlier(myData)
+boxplot(myData$SAT, plot = FALSE)$out
+
+library(dlookr)
+dlookr::diagnose_outlier(myScoreData)
+```
+
+```{r}
+myData %>% plot_boxplot(by = "Grad")
+```
+
+##Handling Outliers
+
+```{r}
+# Replace impossible SAT values (0 or less) with NA
+myData$SAT[myData$SAT <= 0] <- NA
+
+# Replace impossible HS GPA values (0 or less) with NA
+myData$`HS GPA`[myData$`HS GPA` <= 0] <- NA
+
+# Impute NA values with the median (robust to outliers)
+myData$SAT[is.na(myData$SAT)] <- median(myData$SAT, na.rm = TRUE)
+myData$`HS GPA`[is.na(myData$`HS GPA`)] <- median(myData$`HS GPA`, na.rm = TRUE)
+
+library(dlookr)
+dlookr::diagnose_outlier(myData)
+
+```
+
+Outliers were identified in the numeric variables `HS GPA` and `SAT`. Most of these outliers were **valid extreme values**. However, a few **impossible values** were also identified, such as `SAT = 0` and `HS GPA = 0`, which are clearly data errors.
+
+To address the impossible values, they were replaced with the **median** of the respective variable. Median imputation was chosen because it is **robust to extreme values** and preserves the dataset size, ensuring that no rows are unnecessarily removed.
+
+This approach preserves valid extreme values for model learning, prevents data errors from distorting tree splits, and keeps the dataset complete and ready for modeling.
+
+## Partition 70/30
+
+```{r}
+library(caret)
+set.seed(1)
+myIndex<- createDataPartition(myData$Grad, p=0.7, list=FALSE)
+trainSet <- myData[myIndex,]
+testSet <- myData[-myIndex,]
+
+prop.table(table(trainSet$Grad))
+prop.table(table(testSet$Grad))
+```
+
+This code splits the dataset into training (70%) and testing (30%) subsets to maintain the same proportion of graduate vs. non-graduate cases in both sets. The balanced proportions ensure that model training and evaluation are representative of the overall data distribution.
+
+## Clean column names
+
+```{r}
+names(myData) <- make.names(names(myData))
+names(trainSet) <- make.names(names(trainSet))
+names(testSet) <- make.names(names(testSet))
+
+names(myScoreData) <- make.names(names(myScoreData))
+names(trainSet) <- make.names(names(trainSet))
+names(testSet) <- make.names(names(testSet))
+
+```
+
+We standardized column names by replacing spaces and special characters with dots using make.names(). This avoids errors in modeling functions that do not handle spaces or special characters in variable names. The cleaning was applied to the full dataset, the training and test sets, and the incoming freshmen dataset to ensure consistency.
+
+# MODELING
+
+## Pre-processing
+
+### Set control for 10-fold cross validation
+
+```{r}
+myCtrl <- trainControl(method="cv", number=10) 
+```
+
+### Compute class weights for imbalanced data
+
+```{r}
+class_counts <- table(trainSet$Grad)
+wts <- ifelse(trainSet$Grad == 0,
+              (0.5 * sum(class_counts)) / class_counts[1],
+              (0.5 * sum(class_counts)) / class_counts[2])
+```
+
+A 10-fold cross-validation setup was used for consistent model evaluation. Class weights were then computed to address the slight class imbalance, giving proportionally higher weight to the less frequent class (non-graduates) and promoting balanced model learning.
+
+## STEP 1: Unweighted: Full Tree
+
+```{r}
+library(rpart)
+library(rpart.plot)
+set.seed(1)
+
+full_tree <- rpart(as.factor(Grad) ~ ., 
+                   data = trainSet,
+                   method = "class",
+                   control = rpart.control(minsplit = 1, minbucket = 1, cp = 0, maxdepth = 30)) # full tree
+
+cat("Unweighted Full Tree cp Table\n")
+print(full_tree$cptable, digits = 3)
+
+cat("\nUnweighted Variable Importance\n")
+print(caret::varImp(full_tree))
+
+# print the tree diagram
+library(rpart.plot)
+prp(full_tree, # Display the tree:
+    type = 1,             # label all nodes
+    extra = 1,            # show class counts at nodes (104 shows as probabilities)
+    under = TRUE)         # show number of cases under decision node
+```
+
+CP Table Interpretation: The relative error steadily decreases as more splits are added, but the cross-validation error (xerror) stops improving much after 0.97,only a few splits, indicating diminishing returns.
+
+This confirms that the full tree overfits the training data, and a simpler Best Pruned Tree (fewer splits, comparable error) would likely generalize better.
+
+Since we are using rpart() directly, this table comes from its internal 10-fold cross-validation rather than caret’s external CV process.
+
+##Variable Importance: The most influential predictors for graduation are SAT (416.7) and High School GPA (382.0), followed by White (104.9) and College Parent (102.6). Sex (38.8) shows relatively low importance. This confirms that academic performance dominates demographic factors in determining graduation outcomes.
+
+## Confusion Matrix and F1 Score
+
+```{r}
+uf_predicted_class <- predict(full_tree, testSet, type = "class")
+pred <- factor(as.character(uf_predicted_class), levels = c("0","1"))
+ref  <- factor(as.character(testSet$Grad),        levels = c("0","1"))
+uf_CM <- caret::confusionMatrix(pred, ref, positive = "0")
+uf_CM
+
+uf_F1 <- with(as.list(uf_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", uf_F1, "\n")
+```
+
+The model achieved 61.2% accuracy, below the baseline rate of 69.3%.
+
+Sensitivity (0.40) shows the model correctly identifies 40% of non-graduates.
+
+Specificity (0.70) shows stronger performance for predicting graduates.
+
+The F1 score (0.39) reflects weak balance between precision and recall for non-graduates.
+
+## Rationale for using Best Pruned Tree
+
+A Full Tree overfits the training data and performs poorly on new data, while a Best Pruned Tree keeps only splits that improve accuracy, making it simpler, more interpretable, and better at generalizing. The Best Pruned Tree is preferred because it balances accuracy and interpretability, it keeps the tree manageable while retaining most of the predictive power, while the Minimum Error Tree is mainly used for teaching the pruning concept and is rarely deployed in real-world applications.
+
+## STEP 2: Unweighted: Best Pruned Tree
+
+```{r}
+set.seed(1)
+bp_tree <- train(as.factor(Grad) ~.,  data = trainSet,
+								 method = "rpart",     
+								 trControl = myCtrl,
+								 tuneGrid = NULL) # NULL sets to default, which is best pruned    
+
+cat("Unweighted Best Pruned Tree cp Table\n")
+bp_tree$finalModel$cptable
+
+cat("\nUnweighted Variable Importance\n")
+vi <- caret::varImp(bp_tree)
+print(vi)
+
+cat("\nTREE DIAGRAM WITH NODE COUNTS\n")
+prp(bp_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+
+cat("\nTREE DIAGRAM SHOWING PROBABILTIES AND NODE PROPORTION\n")
+prp(bp_tree$finalModel, type = 1, extra = 104, under = TRUE, digits=3)
+```
+
+The **Unweighted Best Pruned Tree** shows a simplified model with only 4 splits, selected to balance accuracy and interpretability.
+
+Variable importance indicates that **HS_GPA** is the strongest predictor of non-graduation, followed by **SAT**, **Sex**, and **White**, while **College Parent** has no predictive value.
+
+-   High achievers (HS.GPA ≥ 3.86) go straight to grad school regardless of other factors
+-   SAT scores serve as a "rescue" variable - males with lower HS.GPA but SAT \> 1045 can still access grad school
+-   Students with HS.GPA \< 3.86 AND male AND SAT ≤ 1045 have only 1.7% of total sample but represent the most at-risk group
+
+### Confusion Matrix and F1 Score \@ Default Cutoff 50%
+
+```{r}
+ub_predicted_class <- predict(bp_tree, testSet, type = "raw")    
+ub_CM <- caret::confusionMatrix(ub_predicted_class, 
+                                as.factor(testSet$Grad), positive = "0")
+
+cat("\nCONFUSION MATRIX AT DEFAULT CUTOFF VALUE\n")
+ub_CM
+
+ub_F1 <- with(as.list(ub_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", ub_F1, "\n")
+```
+
+At the default 50% cutoff, the model achieves an overall accuracy of 71.8%, with a balanced accuracy of 60.0%. Sensitivity for predicting non-graduates (class 0) is low at 29.4%, while specificity for graduates (class 1) is high at 90.6%. The F1 score for the minority class (non-graduates) is 0.39, indicating modest performance in identifying this group, while the model is better at correctly classifying graduates.
+
+## STEP 3: Weighted: Best Pruned Tree
+
+```{r}
+set.seed(1)
+w_bp_tree <- train(as.factor(Grad) ~.,  data = trainSet,
+							  	 method = "rpart",     
+							  	 trControl = myCtrl,
+							  	 tuneGrid = NULL,
+									 weights = wts)  # <-- simply add the weights
+
+cat("Weighted Best Pruned Tree cp Table\n")
+w_bp_tree$finalModel$cptable
+
+cat("\nWeighted Variable Importance\n")
+print(caret::varImp(w_bp_tree))
+
+cat("\nTREE DIAGRAM WITH NODE COUNTS\n")
+prp(w_bp_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+cat("\nTREE DIAGRAM SHOWING PROBABILTIES AND NODE PROPORTION\n")
+prp(w_bp_tree$finalModel, type = 1, extra = 104, under = TRUE, digits=3)
+
+
+wb_predicted_class <- predict(w_bp_tree, testSet, type = "raw")    
+wb_CM <- caret::confusionMatrix(wb_predicted_class, as.factor(testSet$Grad), positive = "0")
+```
+
+Weighting adjusts for class imbalance, upweighting the minority class (non-graduates). Tree is more complex with more terminal nodes
+
+Key differences from the unweighted tree:
+
+-   Root split (HS.GPA \< 3.87) is slightly higher than in the unweighted tree, producing a balanced split due to weights.
+
+-   Gender now drives early splits, creating separate pathways for males and females among lower HS.GPA students.
+
+-   SAT thresholds are higher (1225 and 1255) compared to the unweighted tree, showing that SAT matters more when weighting is applied.
+
+Variable importance remains consistent with the unweighted model.
+
+```{r}
+cat("\nCONFUSION MATRIX AT DEFAULT CUTOFF VALUE\n")
+wb_CM
+
+wb_F1 <- with(as.list(wb_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", wb_F1, "\n")
+```
+
+The weighted decision tree achieved an accuracy of 62.7% on the test set. Its sensitivity was 63.0%, meaning it correctly identified 63% of the non-graduates, while the specificity was 62.5%, indicating it correctly classified 62.5% of the graduates. The F1 score was 0.509, reflecting a moderate balance between precision and recall for the non-graduate class.
+
+## STEP 4: Compare Models and Select Final Model
+
+```{r}
+extract_metrics <- function(cm, f1) {
+  c(Accuracy           = unname(cm$overall["Accuracy"]),
+    Kappa              = unname(cm$overall["Kappa"]),
+    Sensitivity        = unname(cm$byClass["Sensitivity"]),
+    Specificity        = unname(cm$byClass["Specificity"]),
+    `Pos Pred Value`   = unname(cm$byClass["Pos Pred Value"]),
+    Prevalence         = unname(cm$byClass["Prevalence"]),
+    `Detection Rate`   = unname(cm$byClass["Detection Rate"]),
+    `Balanced Accuracy`= unname(cm$byClass["Balanced Accuracy"]),
+    F1                 = f1)}
+
+metrics_table <- data.frame(
+  Full_Tree    = extract_metrics(uf_CM, uf_F1),
+  Unweighted_Pruned = extract_metrics(ub_CM, ub_F1),
+  Weighted_Pruned   = extract_metrics(wb_CM, wb_F1))
+
+metrics_table <- tibble::rownames_to_column(metrics_table, var = "Metric")
+knitr::kable(metrics_table, digits = 3, caption = "MODEL PERFORMANCE COMPARISON")
+```
+
+-   The model comparison shows that pruning improves performance over the full tree by reducing overfitting: the unweighted pruned tree has higher overall accuracy (71.8%) and specificity (90.6%) than the full tree but struggles to detect non-graduates (sensitivity 29.3%, F1 0.390)
+
+Weighted and unweighted pruned trees highlight similar key predictors (HS.GPA, SAT, Sex), but weighting reveals more nuanced patterns for minority cases, making the weighted model better for identifying non-graduates, while the unweighted model favors majority-class accuracy.
+
+# EVALUATION
+
+## Gains Table and Performance Charts
+
+```{r}
+library(gains)
+library(pROC)
+
+
+# convert the depvar back to numeric to plot
+testSet$Grad <- as.numeric(as.character(testSet$Grad))
+
+predicted_prob <-  predict(w_bp_tree, testSet, type = "prob")    
+
+# gains table
+gains_table <- gains(testSet$Grad, predicted_prob[,2])
+gains_table
+
+# cumulative gains chart
+plot(c(0, gains_table$cume.pct.of.total*sum(testSet$Grad)) ~ c(0, gains_table$cume.obs), xlab = '# of cases', ylab = "Cumulative", type = "l", main="Cumulative Gains Chart")
+lines(c(0, sum(testSet$Grad))~c(0, dim(testSet)[1]), col="red", lty=2)
+
+#Decile-Wise Lift Chart
+barplot(gains_table$mean.resp/mean(testSet$Grad), names.arg=gains_table$depth, 
+        xlab="Percentile", ylab="Gains", ylim=c(0,3), 
+				col="blue", main="Decile-Wise Lift Chart")
+abline(h=c(1),col="red")
+
+#ROC with AUC
+roc_object <- roc(testSet$Grad, predicted_prob[,2])
+plot.roc(roc_object)
+auc(roc_object)
+```
+
+## Interpreting Gains Table and Performance Charts
+
+The gains charts are based on predicted probabilities, not the class assignments. Because this decision tree produces only 5 discrete probability values (one per leaf node), the performance charts appear lumpy rather than smooth.
+
+**Gains Table:**\
+The top group (Depth 26) captures 30% of all non-graduates while covering only the first 25% of the sample, showing a meaningful early separation. The mean response rate of 0.82 in this group means that about 82% of these students were correctly identified as non-graduates.
+
+Lift begins at 1.18 (18% better than random chance) and gradually drops toward 1.0, where the model no longer outperforms random guessing. By the final group (Depth 98–100), lift has fallen to 0.72, meaning the model’s predictions there are worse than random.
+
+Overall, the model moderately distinguishes non-graduates from graduates, it identifies a high-risk subset effectively at first but loses accuracy as it moves down.
+
+**Cumulative Gains and Lift Charts:**\
+- Curves are modestly above baseline, rising almost linearly due to discrete probabilities.\
+- The top group of students (top decile) is only about 18% more likely than average to graduate in 4 years
+
+**ROC and AUC:**\
+- AUC = 0.6543, reflecting poor discrimination. The stepwise ROC curve shows the model separates only obvious high performers.
+
+**Practical Implications:**\
+- Model identifies extreme high/low performers but fails to differentiate most students.\
+- Pre-college metrics (HS.GPA, SAT, gender) capture some signal but cannot reliably predict if a student is going to graduate - Useful as a screening tool for broad trends rather than for precise, targeted interventions.
+
+# DEPLOYMENT
+
+## Score new cases from the myScore dataset
+
+```{r}
+new_data_prob <- as.data.frame(predict(w_bp_tree, myScoreData, type = "prob"))
+
+# Not in the textbook
+## Combine the assignments with the original dataset so you can analyze these new customers and score
+scored_opt <- cbind(myScoreData, new_data_prob)
+knitr::kable(scored_opt, align = "c")
+```
+
+The model indicates that **high school GPA** and **SAT score** strongly influence predicted graduation probabilities, while demographic features such as **sex** and **parental college attendance** have smaller effects.
+
+-   Students with **very high HS.GPA and SAT scores** (e.g., `F`, HS.GPA = 4.00, SAT = 1260) receive the **highest probability of graduating (\~77%)**.\
+-   Students with **lower academic metrics** (F\`, HS.GPA = 2.91, SAT = 1090) receive an **intermediate probability of graduating (\~26%)**.\
+-   Students with **moderate profiles** (`M`, HS.GPA = 3.58, SAT = 1210) fall into **mid-range probability levels (\~31%)**.
+
+Using a 50% cutoff to predict graduation, the model classifies students with predicted probabilities above 0.5 as likely to graduate and those below 0.5 as unlikely.
+
+Overall, the model confidently identifies high-performing students as likely graduates, but most cases fall into broader mid-range probability categories, indicating that the model has limited precision in distinguishing between moderate academic profiles.
+
+## Analysis and Recommendations
+
+### Tree Interpretation and Key Insights
+
+The decision tree shows that academic performance—particularly high school GPA and SAT scores—is the strongest determinant of whether a student will graduate within four years. Students with both a high GPA and high SAT score fall into the highest graduation likelihood group, while those with lower values, especially males with a lower GPA and SAT scores, are most at risk. Demographic factors like sex, race (White), and whether parents have college degrees have smaller but noticeable effects. However, because the model produces only a few distinct probability outcomes, it’s better at separating clear extremes (very likely vs. very unlikely) than identifying subtle differences between mid-range students.
+
+### Concerns for Derek
+
+If Derek were reviewing this model, he might worry that the tree focuses heavily on academic metrics and a few demographic variables, potentially overlooking other important factors like motivation, financial stability, or college engagement.
+
+Some students flagged as at-risk may still graduate successfully, leading to false positives, while others who appear safe may struggle, creating false negatives.
+
+### Implications for Graduation Strategy
+
+The model’s results suggest that academic readiness indicators can serve as an early screening tool, but they shouldn’t be used as the sole basis for intervention. The strategy to increase graduation rates should combine predictive modeling with ongoing monitoring.
+
+The current model can help identify broad risk categories early on, but interventions should evolve as more student information becomes available.
+
+### Recommendations for Action
+
+-   Use predictive modeling as a proactive risk management tool. Leverage the model to flag freshmen with lower academic indicators, like GPA, SAT, for early academic advising and support. This allows the university to allocate resources efficiently toward students with the highest intervention potential.
+
+-   Enhance the model’s predictive power through richer data inputs. Integrate real-time variables such as first-semester GPA, course engagement metrics, and advising participation. These behavioral and performance indicators will capture meaningful trends that static pre-college data cannot.
+
+-   Regularly audit demographic and socioeconomic variables to ensure the model supports equity rather than amplifying bias. Communicate model limitations clearly to stakeholders to prevent overreliance on predictions.
+
+-   Align predictive analytics with broader strategic goals. Use model-driven insights to inform recruitment messaging, scholarship allocation, and program development, ensuring data analytics contribute directly to institutional growth and student success.
+
+# References
+
+Jaggia, S., Kelly, A., Lertwachara, K., & Chen, L. (2023). *Business analytics: Communicating with numbers* (2nd Ed.). McGraw-Hill.

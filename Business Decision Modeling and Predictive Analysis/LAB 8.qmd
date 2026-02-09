@@ -1,0 +1,376 @@
+---
+title: "Lab 8 Multiple Regression"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+editor: source
+---
+
+## BUSINESS UNDERSTANDING
+
+The General Manager (GM) of an American football team wants to understand the main factors that determine how much quarterbacks are paid across the league. Quarterbacks are key players, and their salaries can vary a lot depending on their performance and experience.
+
+The GM believes that a quarterback’s pass completion rate (PC%) and total touchdowns (TD) are the most important factors that influence salary. He also wants to include age in the analysis, since older players may have more experience but might also be past their peak performance years.
+
+The goal is to build a multiple linear regression model that explains and predicts quarterback salaries using these three variables. The model will help identify which factors are statistically significant and how strongly each affects salary. It will also be used to evaluate whether Player 8 and Player 16 are being overpaid or underpaid compared to what the model predicts based on their performance.
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r}
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(car)       #for the VIF
+library(Metrics)   # for regression evaluation like RMSE
+library(summarytools)
+library(dlookr)     #diagnose_outlier
+library(formattable)
+library(questionr)
+library(caret)
+library(psych)
+```
+
+## DATA PREPARATION
+
+```{r}
+library(readxl)
+mydata <- read_excel("LAB_8.xlsx", sheet = "Quarterbacks") 
+
+head(mydata)
+tail(mydata)
+```
+
+### Summary Statistics
+
+```{r}
+psych::describe(mydata, fast=TRUE)
+```
+
+#### Variable distributions 
+
+```{r}
+plot_intro(mydata)
+plot_histogram(mydata)
+plot_correlation(mydata)
+```
+
+#### Outliers
+
+```{r}
+table4 <- diagnose_outlier(mydata) 
+knitr::kable(table4, align = "c")
+
+mydata$constant <- "x"  #plot_boxplot needs a by-variable. this ensures a single plot
+plot_boxplot(mydata, by="constant")
+
+```
+
+We checked all key variables (Salary, Pass Completion Rate, Total Touchdowns, Age, and Player ID) for outliers. None of the variables contain outliers, this shows that the data is clean and well-behaved, with no extreme values that could distort the regression results. Since there are also no missing values, the dataset is ready for modeling without additional cleaning.
+
+## DATA PREPARATION
+
+All variables in the dataset are numeric, so there is no need to convert character variables to factors or remove unused nominal variables. The Player ID is kept for reference but will not be used as a predictor. The dataset is clean and ready for partitioning into training and test sets.
+
+### PARTITION
+
+```{r}
+set.seed(1)
+myIndex <- createDataPartition(mydata$Salary, p=.75, list=FALSE)
+trainSet <- mydata[myIndex,]
+testSet <- mydata[-myIndex,]
+
+mean(mydata$Salary)
+mean(trainSet$Salary)
+mean(testSet$Salary)
+```
+
+We used a holdout validation method, splitting 75% of the data for training and 25% for testing based on the Salary variable. This ensures the model is trained on most of the data while keeping a separate set to evaluate its predictive performance on unseen data.The mean salaries in both sets are similar to the overall mean, showing that the sets are representative of the full dataset.
+
+## MODEL
+
+```{r}
+set.seed(1)
+myCtrl <- trainControl(method = "cv", number = 10)
+
+model <- train(Salary ~ + PC + TD + Age,
+							 data = trainSet,
+							 method = "lm",
+							 trControl = myCtrl)
+
+summary <- summary(model$finalModel) #store model summary so we can extract for in-line code
+summary
+```
+
+**Goodness of Fit**
+
+-   The model explains 44% of the variation in quarterback salaries (R² = 0.44) and is statistically significant overall (F = 5.18, p = 0.008). The residual standard error is 5.77, meaning the predicted salaries deviate on average by about \$5.8 million from actual salaries.
+
+**Coefficient Interpretation**
+
+-   TD: Each additional touchdown increases salary by about \$0.96 million.
+
+-   PC%: Each 1% increase in pass completion rate is associated with a \$1.13 million decrease in salary.
+
+-   Age: Each additional year of age increases salary by about \$0.50 million (not statistically significant).
+
+-   Intercept: Represents the predicted salary when all predictors are zero (theoretical value).
+
+**Coefficient Significance**
+
+-   TD is highly significant (p = 0.004), meaning touchdowns strongly affect salary.
+
+-   PC% is significant at α = 0.1 (p = 0.048), showing a small negative effect.
+
+-   Age is not significant (p = 0.143), suggesting it does not meaningfully influence salary in this dataset.
+
+
+**Goodness of Fit:**  
+The model explains `r round(summary$r.squared, 2)` of the variation in quarterback salaries (R²) and has an F-statistic of `r round(summary$fstatistic[1], 2)` with a p-value of `r signif(pf(summary$fstatistic[1], summary$fstatistic[2], summary$fstatistic[3], lower.tail = FALSE), 3)`. The residual standard error is `r round(summary$sigma, 2)`.
+
+**Coefficient Interpretation (on average, ceteris paribus):**  
+- **TD:** Each additional touchdown increases salary by `r round(summary$coefficients["TD","Estimate"],2)` million dollars, on average, ceteris paribus.  
+- **PC%:** Each 1% increase in pass completion rate changes salary by `r round(summary$coefficients["PC","Estimate"],2)` million dollars, on average, ceteris paribus.  
+- **Age:** Each additional year changes salary by `r round(summary$coefficients["Age","Estimate"],2)` million dollars, on average, ceteris paribus.  
+
+**Coefficient Significance:**  
+- **TD:** p = `r signif(summary$coefficients["TD","Pr(>|t|)"],3)` (highly significant)  
+- **PC%:** p = `r signif(summary$coefficients["PC","Pr(>|t|)"],3)` (significant at α = 0.1)  
+- **Age:** p = `r signif(summary$coefficients["Age","Pr(>|t|)"],3)` (not significant)  
+
+### Check for Multicollinearity
+
+```{r}
+library(performance)
+vif_results <- check_collinearity(model$finalModel)
+```
+
+The Variance Inflation Factor (VIF) values for the predictors are: PC% = `r round(vif_results$VIF[vif_results$Term=="PC"],2)`, TD = `r round(vif_results$VIF[vif_results$Term=="TD"],2)`, and Age = `r round(vif_results$VIF[vif_results$Term=="Age"],2)`.  
+
+PC% and TD show moderate correlation, which is reasonable because quarterbacks who score more touchdowns often have higher completion rates. Age has a low VIF, indicating it is largely independent of the performance variables. The Tolerance values (the reciprocal of VIF) are all above 0.2, confirming that each predictor contributes unique information to the model.  
+
+Overall, while PC% and TD are moderately correlated, the relationship is not strong enough to cause problems. The model coefficients can be interpreted confidently, and multicollinearity is not a major concern.
+
+### Residual Analysis
+
+-   Fitted vs Actual (looking for linear relationship)
+-   Residuals vs Fitted (looking for no change in variability)
+-   Residuals vs Predictor (want linear pattern)
+-   Fitted vs Predictor (want a linear pattern)
+-   QQ Plot (want dots along the line - indicates normal distribution)
+-   Histogram of Residuals (want normal distribution)
+
+**Note that you should include all predictors of interest that are statistically significant.**\
+
+```{r}
+# Create a dataset with actual, fitted, and residual values
+model_out <- trainSet %>%
+  cbind(fitted = model$finalModel$fitted.values, residuals = model$finalModel$residuals)
+
+library(ggplot2)
+
+# Fitted vs Actual
+ggplot(model_out, aes(x = Salary, y = fitted)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Fitted vs Actual")
+
+# Residuals vs Fitted
+ggplot(model_out, aes(x = fitted, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(title = "Residuals vs Fitted")
+
+# Residuals vs Predictor PC
+ggplot(model_out, aes(x = PC, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(title = "Residuals vs Predictor")
+
+# Residuals vs Predictor TD
+ggplot(model_out, aes(x = TD, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(title = "Residuals vs Predictor")
+
+# Fitted vs Predictor PC
+ggplot(model_out, aes(x = PC, y = fitted)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Fitted vs Predictor")
+
+# Fitted vs Predictor TD
+ggplot(model_out, aes(x = TD, y = fitted)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Fitted vs Predictor")
+
+# QQ-Plot
+res <- resid(model$finalModel)
+qqnorm(res)
+qqline(res)
+
+# Distribution of residuals
+hist(res)
+
+# Distribution of fitted values
+hist(model_out$fitted)
+
+
+```
+
+-   The **Fitted by Actual:** Shows a generally positive linear relationship, indicating the model captures the main trend between predicted and actual quarterback salaries. However, it tends to overestimate lower salaries and shows greater variability at higher values. Overall, the model fits reasonably well but still leaves room for improvement.\
+
+-   **Residuals by Fitted:** Displays residuals scattered around zero, suggesting the model is mostly linear. The wider spread at higher fitted values indicates heteroscedasticity and a few outliers, meaning prediction accuracy decreases for higher salaries.\
+
+-   **Residuals vs PC:** Residuals are scattered randomly with no strong pattern, suggesting a  linear relationship but weak predictive power for PC. A few outliers near higher completion rates indicate that some quarterbacks earn substantially more or less than expected.\
+
+-   **Residuals vs TD:** Residuals are also mostly random across touchdown counts, supporting linearity, but greater spread at higher counts and recurring outliers indicate heteroscedasticity and higher variance among top-performing players.\
+
+-   **Fitted vs PC:** The plot confirms positive linear relationship, which means that higher pass completion rates are associated with higher predicted salaries. The dispersion of points shows that PC alone does not fully explain salary differences.\
+
+-   **Fitted vs TD:** The plot shows a strong positive linear relationship, indicating that predicted salaries rise consistently with higher touchdown counts. The points are more concentrated around the trend line than in the PC plot, suggesting TD provides a more precise prediction, although a few outliers still deviate from the expected pattern\
+
+-   **Q-Q plot:** The residuals mostly follow a normal distribution, though some extreme values at the tails indicate a few outliers suggesting a few unusual salaries that the model struggles to predict accurately.\
+
+-   **Residuals histogram:** Most residuals are close to zero, indicating that the model’s predictions are generally accurate and unbiased. However, a few extreme residuals create long tails, suggesting that some quarterbacks’ salaries are not well captured by the model and may be influenced by factors outside the predictors.\
+
+-   **Fitted Values histogram:** The predicted salaries show two distinct peaks, reflecting that the model differentiates between lower- and higher-earning quarterbacks. This pattern likely corresponds to different performance levels or contract types, indicating that the model captures broad salary trends but may smooth over finer individual differences.\
+
+
+## EVALUATION
+
+Predict onto the Test dataset and assess model predictive capability.\
+
+```{r}
+Salary_predict <- predict(model, newdata = testSet)
+model_predict2 <- cbind(testSet, Salary_predict)
+
+library(ggplot2)
+
+# Fitted vs Actual
+ggplot(model_predict2, aes(x = Salary, y = Salary_predict)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Test: Scored Fitted vs Actual")
+```
+- Overall, the model is not fully reliable for accurately estimating quarterback salaries on unseen data.
+
+- The test set results show that the model struggles to generalize to new data. Predictions tend to underestimate high salaries and overestimate low salaries. The slope of the predicted vs actual relationship is shallow, and the points are widely scattered around the line, indicating substantial prediction errors. 
+
+### Evaluation Metrics
+```{r}
+library(Metrics)
+
+# Make sure the values are numeric in vectors not array (Metrics package is quirky that way)
+actual <- as.numeric(model_predict2$Salary)
+pred   <- as.numeric(model_predict2$Salary_predict)
+
+RMSE <- formattable::comma(round(Metrics::rmse(actual, pred), 2),
+													 digits = 2, format = "f", big.mark = ",")
+
+MAE <- formattable::comma(round(Metrics::mae(actual, pred), 2),
+													digits = 2, format = "f", big.mark = ",")
+
+MAD <- formattable::comma(round(mad(actual - pred), 2),
+													digits = 2, format = "f", big.mark = ",")
+
+MAPE <- formattable::percent(round(Metrics::mape(actual, pred), 5), 
+													digits = 2)
+
+cat("RMSE:", RMSE,"\n")
+cat("MAE :", MAE,"\n")
+cat("MAD :", MAD,"\n")
+cat("MAPE:", round(MAPE*100,2),"%\n")
+
+```
+**Root Mean Square Error** (RMSE = `r RMSE`): On average, the model’s predictions deviate from the actual salaries by about \$`r RMSE` million. RMSE gives more weight to larger errors, highlighting extreme over- or under-predictions, meaning the model struggles most with very high- or low-paid quarterbacks.
+
+**Mean Absolute Error** (MAE = `r MAE`): The average absolute difference between predicted and actual salaries is \$`r MAE` million. This measures typical prediction accuracy without exaggerating extreme errors, giving a more intuitive sense of how far predictions are from actual values.  
+
+**Mean Absolute Deviation** (MAD = `r MAD`): The median absolute deviation of the prediction errors is \$`r MAD` million. This indicates that half of the prediction errors are smaller than this value, but some errors are much larger, emphasizing the presence of outliers or unusual salary cases. 
+
+**Mean Absolute Percentage Error** (MAPE = `r MAPE`): On average, the model’s predictions differ from the actual salaries by `r MAPE`% in relative terms. This high percentage shows that for some quarterbacks—particularly those with very low or very high salaries—the model predictions are proportionally far from actual values, reflecting poor predictive scaling across the salary range.  
+
+
+### Evaluation REC
+
+"Error Characteristic curves are a generalization of ROC curves. On the x axis of the plot there is an error tolerance and on the y axis there is a percentage of observations predicted within the given tolerance (auditor package)."\
+
+```{r}
+library(auditor)
+lm_audit <- audit(model, data = testSet, y = testSet$Salary)
+mr_lm <- model_residual(lm_audit)
+plot_rec(mr_lm)
+score_rec(lm_audit)  #area over the curve
+```
+
+-   The REC curve chart indicates that the model does not perform well in prediction. The shape of the REC curve indicates that many predictions deviate substantially from actual salaries, rather than staying close to the true values. While the area over the curve (area over the curve = 3.30) can be used to compare different models, in this case it highlights the moderate performance of our single model.
+
+
+## DEPLOYMENT
+
+The football franchise’s General Manager is particularly interested in assessing the pay of two quarterbacks: Player 8 and Player 16. Using the developed regression model, we will generate predicted salaries for these players based on the full dataset.
+
+This approach allows us to evaluate whether each player’s current compensation aligns with their on-field performance. By comparing the model’s predicted salaries to the actual salaries, we can quantify whether the players appear overpaid or underpaid based on their performance metrics.
+
+```{r}
+model_all <- lm(Salary ~ PC + TD + Age, data=mydata)
+summary(model_all)
+
+pip <- mydata %>%
+  mutate(resid = residuals(model_all),
+  			 predict = fitted(model_all))
+
+pip2 <- dplyr::filter(pip, Player %in% c(8, 16))
+pip2 %>% dplyr::select(Player, Salary, resid, predict)
+
+```
+
+The model has a moderate fit with an **R² = `r round(0.3931, 3)`**, meaning it explains roughly 39% of the variation in salaries. The **F-statistic is significant (p = `r signif(0.002624, 3)`)**, indicating that the predictors together reliably explain salary variation.  
+
+- **PC:** Negative coefficient (`r round(-0.8265, 2)`) with p ≈ `r signif(0.06978, 3)` suggests a weak and marginally significant relationship; higher completion percentage does not strongly increase salary in this dataset.  
+- **TD:** Positive coefficient (`r round(0.7850, 2)`, p ≈ `r signif(0.00387, 3)`) indicates that each additional touchdown adds about \$`r round(0.7850, 2)`M to salary, ceteris paribus, making TD the strongest predictor.  
+- **Age:** Small positive coefficient (`r round(0.3862, 2)`), not statistically significant (p ≈ `r signif(0.13852, 3)`), meaning age has little effect on salary when accounting for performance.  
+
+The residuals for the regression model range from approximately `r round(-11.6189, 2)` to `r round(14.2497, 2)`. This wide range highlights that some quarterbacks are paid significantly more or less than what the model predicts based on their performance metrics. These indicate that other factors beyond these predictors influence compensation.
+
+For **Player 8**, the actual salary is \$`r round(12.9895, 2)`M, while the model predicts \$`r round(12.71234, 2)`M, resulting in a small residual of `r round(0.2771577, 2)`. This indicates Player 8 is very slightly overpaid, but the difference is negligible, so his compensation is essentially in line with performance.
+
+In contrast, **Player 16** has an actual salary of \$`r round(8.00728, 2)`M, but the predicted salary is \$`r round(12.82458, 2)`M, producing a residual of `r round(-4.8173004, 2)`. This large negative residual indicates that Player 16 is undercompensated relative to model expectations. Based on his performance metrics, the model suggests that his salary should be substantially higher.
+
+Overall, the model explains a moderate portion of salary variation. The predictions are useful for identifying discrepancies in player pay, particularly when assessing whether quarterbacks are overpaid or underpaid relative to performance.
+
+### INSIGHTS
+
+Total touchdowns (TD) strongly drive quarterback salaries, with each additional touchdown increasing expected pay by \$`r round(summary$coefficients["TD","Estimate"],2)`M. This suggests that teams heavily reward scoring performance when setting contracts. In contrast, pass completion percentage (PC%) has a weak negative effect, and age is not significant, indicating that efficiency and experience alone are less influential than scoring ability in determining pay.
+
+The model explains a moderate portion of salary variation (R² = `r round(summary$r.squared, 2)`), meaning that while performance metrics like TD capture broad trends, other factors influence more.
+
+Predictions on the test set show a tendency to underestimate high salaries and overestimate low salaries, with RMSE = `r RMSE`, MAE = `r MAE`, and MAPE = `r round(MAPE,2)`%. This indicates the model is moderately reliable for typical players but struggles to accurately estimate extreme salaries, highlighting the limitations of relying solely on TD, PC%, and age.
+
+Player-specific insights reveal that Player 8’s salary (`r paste0("$", round(pip2$Salary[pip2$Player==8], 2), "M")`) aligns closely with model predictions (`r paste0("$", round(pip2$predict[pip2$Player==8], 2), "M")`), suggesting his compensation is fair relative to performance. In contrast, Player 16’s salary (`r paste0("$", round(pip2$Salary[pip2$Player==16], 2), "M")`) falls well below the predicted value (`r paste0("$", round(pip2$predict[pip2$Player==16], 2), "M")`), indicating he is underpaid and could be considered for contract adjustment.
+
+
+### RECOMMENDATIONS
+
+- Consider additional factors beyond basic performance metrics: While touchdowns and completion rates are strong predictors, other  factors should be considered into compensation decisions for a more complete evaluation.
+
+- Reward high-impact performance: Focus compensation on the metrics that most clearly drive value—players who consistently generate top results should be prioritized for higher pay to retain key talent and motivate performance.
+
+- Address undercompensation strategically: Players whose contributions exceed their pay, like Player 16, represent untapped value. Adjusting contracts or offering incentives can improve satisfaction and loyalty while aligning pay with results.
+
+- Monitor efficiency of payroll: Regularly compare salaries to expected benchmarks to avoid overpaying players whose output does not justify high compensation, maintaining financial flexibility for other investments.
+
+- Treat outliers individually; high-performing underpaid players may merit targeted raises or incentives, while overpaid players should be monitored to ensure alignment with performance.
+
+
+## END
+

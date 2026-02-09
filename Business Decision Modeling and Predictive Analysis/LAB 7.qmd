@@ -1,0 +1,1037 @@
+---
+Title: "DAT-4253 LM 7 - Classification - Summary Project"
+author: "Gabriela Chajon C"
+date: "Due Date: October 13, 2024"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r}
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(gridExtra)
+library(caret)
+library(gains)
+library(pROC)
+library(klaR)
+library(rpart)
+library(rpart.plot)
+```
+
+# BUSINESS UNDERSTANDING
+
+Jake Diaz, the HR leader at ACE-Tech, a technology company based in Silicon Valley, is conducting a review of the company’s technical sales representatives. These reps handle both the sales and installation of ACE-Tech’s products for large business clients.
+
+To get a full picture, Mr. Diaz’s team collected information from two surveys: the Employee 360, which includes feedback from supervisors and pears, and a client satisfaction survey that asks the client to rate their "willingness to recommend ACE-Tech to a colleague" and gives each rep a Recommendation Score between 0 and 10.
+
+Research shows that representatives with Recommendation Scores of 9 or 10 tend to achieve stronger performance and remain with the company longer. Mr. Diaz wants to determine what sets these top performers apart from those who score 8 or lower. The HR team has gathered data for 21,990 reps, including their evaluation results, salary, education, and personality characteristics.
+
+As the lead HR Analyst, we will apply four different classification methods to identify meaningful patterns and deliver insights that will help Mr. Diaz shape a recruitment strategy focused on hiring more high-performing technical sales representatives.
+
+# DATA UNDERSTANDING
+
+```{r}
+library(readxl)
+mydata <- read_excel("jaggia_ba_1e_TechSales_Reps.xlsx") %>% 
+	mutate(across(where(is.character), as.factor))
+
+library(janitor)
+mydata <- clean_names(mydata)
+```
+
+## Create the dependent variable
+
+```{r}
+# create depvar 
+# check your work
+# then  drop the original nps variable and the sales_repid  -- you don't want those in your model :)
+
+mydata <- mydata %>% 
+	mutate(depvar = factor(ifelse(mydata$nps > 8, 1, 0), levels = c(0, 1))) 
+
+library(summarytools)
+ctable(as.factor(mydata$nps), mydata$depvar)
+
+mydata <- mydata %>% 
+	dplyr::select(-nps, -sales_rep)
+```
+
+## EDA
+
+### Check for missing values, variable formats, and data load errors.
+
+```{r}
+mydata %>% head(3)
+mydata %>% tail(3)
+mydata %>% plot_intro()
+str(mydata)
+```
+
+### Check depvar proportion for balance
+
+```{r}
+prop.table(table(mydata$depvar))
+```
+
+### Check summary statistics and variable distributions
+
+```{r}
+mydata$depvar <- as.factor(mydata$depvar)
+mydata%>% plot_histogram()
+mydata %>% plot_boxplot(by = "depvar")
+```
+
+### Check for outliers
+
+```{r}
+library(dlookr)
+dlookr::diagnose_outlier(mydata)
+summary(mydata$depvar)
+```
+
+STUDENT: Comment on the EDA -- address summary measures, distributions, missing values, and outliers.\
+
+-   The bar chart shows that the dataset is composed of 40% discrete variables and 60% continuous variables, with no missing data across any of the fields.
+
+-   The dependent variable demonstrates a noticeable imbalance, as 79.8% of the observations fall under class 0 and only 20.2% under class 1.
+
+-   **Histogram:**
+
+    -   The distribution of **age** is fairly even, with most representatives falling within the 20 to 60-year range.\
+    -   The number of **certificates** held by sales reps is heavily concentrated at the lower end, indicating that the majority possess between zero and four certificates.\
+    -   The **feedback** scores are relatively balanced between ratings 1 and 3, but there is a noticeable increase in the number of ratings at level 4.
+    -   The **salary** distribution is right-skewed, suggesting that higher salaries are less common, and most reps earn between \$500,000 and \$1,000,000.\
+    -   The **years** of experience cluster on the lower side, meaning that a large portion of employees have relatively few years of experience at ACE-Tech.
+
+-   **Boxplots:**
+
+    -   The boxplots reveal several outliers, especially in the salary and years of experience variables.
+
+-   **Outliers:**
+
+    -   Around 19.9% of the data in the years column (4377 outliers) and 1.85% in the salary column (408 outliers) fall outside the normal range. The rest of the variables appear free of outliers.
+
+# DATA PREPARATION
+
+###Handling Outliers
+
+```{r}
+mydata <- mydata %>% filter(years >= 0) %>%
+  mutate(years_log = log(years + 1))
+```
+
+-   Removed records with negative values in the **years** variable, since negative experience is not logically valid and could introduce errors or bias in the analysis.
+
+-   Created a new variable, **years_log**, by applying a log transformation to reduce skewness and stabilize variance this will allow a more normally distributed variable that improves model performance.
+
+# MODELING AND EVALUATION
+
+## MODEL 1: KNN
+
+### Prepare Data
+
+Predictors can only be scaled numeric.
+
+-   select and keep only the numerics (drop the categorical predictors)
+
+-   scale the remaining numerics\
+    ####Scaling and change female from numeric to factor
+
+```{r}
+mydata_scaled <- mydata %>%
+	mutate(female=as.factor(female)) %>%   #female stored as numeric, so change to factor to drop it
+  dplyr::select(depvar,where(is.numeric)) %>%  
+  dplyr::mutate(across(where(is.numeric), scale)) 
+```
+
+### Partition
+
+#### Partition 60/40 and check proportions
+
+```{r}
+set.seed(1)
+myIndex<- createDataPartition(mydata_scaled$depvar, p=0.6, list=FALSE)
+trainSet_scaled <- mydata_scaled[myIndex,]
+testSet_scaled  <- mydata_scaled[-myIndex,]
+
+# check proportions are relevant
+cat("Full Dataset");    prop.table(table(mydata_scaled$depvar))
+cat("\nTrain Dataset"); prop.table(table(trainSet_scaled$depvar))
+cat("\nTest Dataset");  prop.table(table(testSet_scaled$depvar))
+```
+
+### KNN Model
+
+```{r}
+myCtrl <- trainControl(method = "cv", number = 10 )
+myGrid <- expand.grid(.k=c(1:10))
+set.seed(1)
+KNN_fit <- train(depvar ~. , 
+								 trainSet_scaled, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit
+```
+
+### Performance Metrics at Default Cutoff
+
+```{r}
+predicted_class <- predict(KNN_fit, testSet_scaled, type = "raw")    
+CM <- caret::confusionMatrix(predicted_class, testSet_scaled$depvar, positive = "1")  
+CM
+precision <- unname(CM$byClass['Pos Pred Value']) 
+recall    <- unname(CM$byClass['Sensitivity'])  
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score, "\n")
+```
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+predicted_prob <- as.data.frame(predict(KNN_fit, testSet_scaled, type = "prob"))
+roc_curve <- pROC::roc(as.numeric(testSet_scaled$depvar), predicted_prob[,2])
+optimal_cutoff <- coords(roc_curve, "best", ret = "threshold") #best uses Youden 
+cat("Optimal Cutoff"); optimal_cutoff
+
+predicted_class_opt <- ifelse(predicted_prob[,2] >= optimal_cutoff$threshold, 1, 0)
+
+cat("CONFUSION MATRIX AT OPTIMAL CUTOFF VALUE OF:", optimal_cutoff$threshold,"\n\n")
+CM_opt_KNN <- confusionMatrix(as.factor(predicted_class_opt), as.factor(testSet_scaled$depvar), positive = '1')
+CM_opt_KNN
+precision <- unname(CM_opt_KNN$byClass['Pos Pred Value']) # synonyms
+recall    <- unname(CM_opt_KNN$byClass['Sensitivity'])   # synonyms
+f1_score_KNN <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score_KNN, "\n")
+```
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+# STUDENTS:  this is a compact way to visualize performance. It shows only the gains plot (from the gains table) and the ROC curve.  Both charts are printed side-by-side with the AUC metric overlaid on the ROC chart.
+
+testSet_scaled$depvar <- as.numeric(as.character(testSet_scaled$depvar))
+
+gains_table <- gains(testSet_scaled$depvar, predicted_prob[,2])
+
+gains_plot <- ggplot() +
+  geom_line(aes(x = c(0, gains_table$cume.obs), y = c(0, gains_table$cume.pct.of.total * sum(testSet_scaled$depvar))),
+            color = "blue") +
+  geom_line(aes(x = c(0, dim(testSet_scaled)[1]), y = c(0, sum(testSet_scaled$depvar))),
+            color = "red", linetype = "dashed") +
+  labs(x = "# of cases", y = "Cumulative", title = "Cumulative Gains Chart") +
+  theme_minimal()
+
+roc_object <- pROC::roc(testSet_scaled$depvar, predicted_prob[,2])
+
+auc_knn <- auc(roc_object)
+
+roc_plot <- ggroc(roc_object) +
+   geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1), linetype = "dashed", color = "red") + 
+  labs(x = "1 - Specificity", y = "Sensitivity", title = "ROC Curve") +
+	annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_knn, 4)), size = 5, color = "blue") + 
+  theme_minimal()
+
+grid.arrange(gains_plot, roc_plot, ncol = 2)
+```
+
+```{r}
+rm(CM, gains_table, gains_plot, mydata_scaled, myGrid, myIndex, optimal_cutoff, 
+	 predicted_prob, roc_curve, roc_object, roc_plot, trainSet_scaled,
+	 f1_score, precision, predicted_class, predicted_class_opt, recall)
+```
+
+## MODEL 2: NAIVE BAYES
+
+### Prepare Data
+
+Data need to be categorical. Dr. V's recommendation:
+
+-   Convert only age, salary, feedback, years, and certifications into bins.
+
+-   Make sure to DROP the original non-binned variables.
+
+-   Also drop all other factor variables except the depvar.
+
+### Binning
+
+```{r}
+library(dplyr)
+mydata_binned <- mydata %>%
+  mutate(
+    age_bin = cut(age, breaks = 5, labels = FALSE),
+    salary_bin = cut(salary, breaks = 5, labels = FALSE),
+    feedback_bin = cut(feedback, breaks = 3, labels = FALSE),
+    years_bin = cut(years, breaks = 4, labels = FALSE),
+    cert_bin = cut(certficates, breaks = 3, labels = FALSE) ) 
+  
+```
+
+### Selecting only binned variables and depvar
+
+```{r}
+mydata_binned <- mydata_binned %>%
+    dplyr::select(-age, -salary, -feedback, -years, -certficates, -business, -female, -college, -personality)
+head(mydata_binned)
+```
+
+### Partition
+
+#### Partition 60/40 and check proportions
+
+```{r}
+library(caret)
+
+set.seed(1)
+myIndex <- createDataPartition(mydata_binned$depvar, p = 0.6, list = FALSE)
+trainSet_NB <- mydata_binned[myIndex, ]
+testSet_NB  <- mydata_binned[-myIndex, ]
+
+cat("Full Dataset"); prop.table(table(mydata_binned$depvar))
+cat("\nTrain Dataset"); prop.table(table(trainSet_NB$depvar))
+cat("\nTest Dataset");  prop.table(table(testSet_NB$depvar))
+```
+
+### NB Model
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10) 
+set.seed(1)
+nb_fit <- train(depvar ~ ., data = trainSet_NB, method = "nb", trControl = ctrl)  
+nb_fit
+
+```
+
+### Performance Metrics at Default Cutoff
+
+```{r}
+predicted_class <- predict(nb_fit, testSet_NB)
+
+CM <- caret::confusionMatrix(predicted_class, testSet_NB$depvar, positive = "1")
+CM
+precision <- unname(CM$byClass['Pos Pred Value']) 
+recall    <- unname(CM$byClass['Sensitivity'])  
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score, "\n")
+```
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+
+predicted_prob_NB <- predict(nb_fit, testSet_NB, type = "prob")[, 2]
+
+
+roc_NB <- pROC::roc(as.numeric(testSet_NB$depvar), predicted_prob_NB)
+optimal_cutoff_NB <- coords(roc_NB, "best", ret = "threshold")
+
+
+optimal_threshold_value_NB <- as.numeric(optimal_cutoff_NB["threshold"])
+cat("Optimal Cutoff (NB):", optimal_threshold_value_NB, "\n")
+
+
+predicted_class_opt_NB <- ifelse(predicted_prob_NB >= optimal_threshold_value_NB, "1", "0")
+
+# Confusion matrix at optimal cutoff
+CM_opt_NB <- caret::confusionMatrix(as.factor(predicted_class_opt_NB), testSet_NB$depvar, positive = "1")
+CM_opt_NB
+
+# Calculate Precision, Recall, and F1 Score at optimal cutoff
+precision_opt_NB <- unname(CM_opt_NB$byClass['Pos Pred Value'])
+recall_opt_NB <- unname(CM_opt_NB$byClass['Sensitivity'])
+f1_score_opt_NB <- 2 * ((precision_opt_NB * recall_opt_NB) / (precision_opt_NB + recall_opt_NB))
+
+cat("F1 Score (Optimal Cutoff):", f1_score_opt_NB, "\n")
+```
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+testSet_NB$depvar <- as.numeric(as.character(testSet_NB$depvar))
+
+gains_table <- gains(testSet_NB$depvar, predicted_prob_NB)
+
+gains_plot <- ggplot() +
+  geom_line(aes(x = c(0, gains_table$cume.obs), y = c(0, gains_table$cume.pct.of.total * sum(testSet_NB$depvar))),
+            color = "blue") +
+  geom_line(aes(x = c(0, dim(testSet_NB)[1]), y = c(0, sum(testSet_NB$depvar))),
+            color = "red", linetype = "dashed") +
+  labs(x = "# of cases", y = "Cumulative", title = "Cumulative Gains Chart") +
+  theme_minimal()
+
+roc_object <- pROC::roc(testSet_NB$depvar, predicted_prob_NB)
+
+auc_nb <- auc(roc_object)
+
+roc_plot <- ggroc(roc_object) +
+  geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1), linetype = "dashed", color = "red") + 
+  labs(x = "1 - Specificity", y = "Sensitivity", title = "ROC Curve") +
+  annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_nb, 4)), size = 5, color = "blue") + 
+  theme_minimal()
+
+grid.arrange(gains_plot, roc_plot, ncol = 2)
+```
+
+## MODEL 3: LOGISTIC REGRESSION
+
+### Prepare Data
+
+#### Scaling and change female from numeric to factor
+
+```{r}
+mydata_scaled_LR <- mydata %>%
+  mutate(female = as.factor(female)) %>%   # Change female from numeric to factor
+  dplyr::select(depvar, where(is.numeric)) %>%  
+  dplyr::mutate(across(where(is.numeric), scale))
+```
+
+### Partition
+
+#### Partition 60/40 and check proportions
+
+```{r}
+set.seed(1)
+
+myIndex_LR <- createDataPartition(mydata_scaled_LR$depvar, p = 0.6, list = FALSE)
+trainSet_LR <- mydata_scaled_LR[myIndex_LR, ]
+testSet_LR  <- mydata_scaled_LR[-myIndex_LR, ]
+
+cat("Full Dataset:\n")
+print(prop.table(table(mydata_scaled_LR$depvar)))
+
+cat("\nTrain Dataset:\n")
+print(prop.table(table(trainSet_LR $depvar)))
+
+cat("\nTest Dataset:\n")
+print(prop.table(table(testSet_LR$depvar)))  
+```
+
+### Logistic Regression Model
+
+#### Model Summary
+```{r}
+library(car)
+
+myCtrl <- trainControl(method = "cv", number = 10)
+
+set.seed(1)
+logit <- train(as.factor(depvar) ~ ., data = trainSet_LR, 
+               method = "glm", family = "binomial", 
+               trControl = myCtrl)
+
+summary(logit$finalModel)  
+```
+
+### Coefficients as Odds Ratios
+
+```{r}
+exp(coef(logit$finalModel))
+```
+From a business perspective, the logistic regression model provides insights into the characteristics that distinguish top-performing ACE-Tech technical sales reps, defined as those with high Recommendation Scores (9 or 10). Age has a slightly negative effect, indicating that younger reps are marginally more likely to earn high recommendation scores. In contrast, experience, certifications, feedback scores, and salary all positively increase the odds of high performance, with certifications and salary showing the strongest influence. This suggests that ACE-Tech can enhance top-performer identification and recruitment by prioritizing candidates with relevant experience, formal certifications, a strong track record of peer and supervisor feedback, and competitive compensation. 
+
+### Fit Metrics
+
+#### Deviance Table
+```{r}
+# rerun the logistic regression without cross validation
+logit_full <- glm(depvar ~ ., family = binomial(link = "logit"), data = trainSet_LR)
+
+# Create the null model (intercept only) using glm() directly
+logit_null <- glm(depvar ~ 1, family = binomial(link = "logit"), data = trainSet_LR)
+
+# Run the LRT
+anova(logit_full, logit_null, test = "LRT")
+```
+
+#### McFadden 
+```{r}
+library(DescTools)
+library(formattable)
+McFadden <- formattable::comma(PseudoR2(logit_full, "McFadden"), digits = 4)
+Nagel <- formattable::comma(PseudoR2(logit_full, "Nagel"), digits = 4)
+McFadden; Nagel;
+cat("AIC:", logit$finalModel$aic,"\n")
+```
+### Performance Metrics at Default Cutoff
+
+```{r}
+LR_predclass <- predict(logit, newdata = testSet_LR)
+
+# Confusion matrix for default cutoff
+LR_CM <- caret::confusionMatrix(LR_predclass, testSet_LR$depvar, positive = "1")
+print(LR_CM)
+
+# Precision, Recall, and F1 Score
+LR_precdef <- unname(LR_CM$byClass['Pos Pred Value'])
+LR_recdef <- unname(LR_CM$byClass['Sensitivity'])
+LR_F1score <- 2 * ((LR_precdef * LR_recdef) / (LR_precdef + LR_recdef))
+
+cat("F1 Score (Default Cutoff):", LR_F1score, "\n")
+```
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+LR_pred_prob <- predict(logit, newdata = testSet_LR, type = "prob")[, 2]
+
+
+LR_Roc <- pROC::roc(as.numeric(testSet_LR$depvar), LR_pred_prob)
+LR_opt_cutoff <- coords(LR_Roc, "best", ret = "threshold")
+
+
+LR_opt_threshval <- as.numeric(LR_opt_cutoff["threshold"])
+cat("Optimal Cutoff (LR):", LR_opt_threshval, "\n")
+
+
+LR_opt_predclass <- ifelse(LR_pred_prob >= LR_opt_threshval, "1", "0")
+
+
+LR_opt_CM <- caret::confusionMatrix(as.factor(LR_opt_predclass), testSet_LR$depvar, positive = "1")
+print(LR_opt_CM )
+
+# Precision, Recall, and F1 Score at optimal cutoff
+OptLR_precision <- unname(LR_opt_CM$byClass['Pos Pred Value'])
+LR_opt_recall <- unname(LR_opt_CM$byClass['Sensitivity'])
+LR_opt_F1_score <- 2 * ((OptLR_precision * LR_opt_recall) / (OptLR_precision + LR_opt_recall))
+
+cat("F1 Score (Optimal Cutoff):", LR_opt_F1_score, "\n")
+```
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+# Cumulative gains
+LR_act_numeric <- as.numeric(as.character(testSet_LR$depvar))
+LR_gns <- gains(LR_act_numeric, LR_pred_prob)
+
+LR_gns_plt <- ggplot() +
+  geom_line(aes(x = c(0, LR_gns$cume.obs), y = c(0, LR_gns$cume.pct.of.total * sum(LR_act_numeric))),
+            color = "blue") +
+  geom_line(aes(x = c(0, dim(testSet_LR)[1]), y = c(0, sum(LR_act_numeric))),
+            color = "red", linetype = "dashed") +
+  labs(x = "# of Cases", y = "Cumulative", title = "Cumulative Gains Chart (LR)") +
+  theme_minimal()
+
+# ROC curve with AUC for Logistic Regression
+roc_object_LR <- pROC::roc(testSet_LR$depvar, LR_pred_prob)
+
+auc_LR <- auc(roc_object_LR)
+
+roc_plot_LR <- ggroc(roc_object_LR) +
+  geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1), linetype = "dashed", color = "red") + 
+  labs(x = "1 - Specificity", y = "Sensitivity", title = "ROC Curve for Logistic Regression") +
+  annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_LR, 4)), size = 5, color = "blue") + 
+  theme_minimal()
+
+grid.arrange(LR_gns_plt, roc_plot_LR, ncol = 2)
+```
+
+## MODEL 4: CLASSIFICATION TREE
+
+### Prepare Data
+
+### Partition
+
+#### Partition 60/40 and check proportions
+
+```{r}
+library(dplyr)
+set.seed(1)
+
+# Data partition for CART model
+Crt_index <- createDataPartition(mydata$depvar, p = 0.6, list = FALSE)
+train_crt <- mydata[Crt_index, ]
+testSet_crt <- mydata[-Crt_index, ]
+
+cat("Full Dataset:\n")
+print(prop.table(table(mydata$depvar)))
+
+cat("\nTrain Dataset:\n")
+print(prop.table(table(train_crt $depvar)))
+
+cat("\nTest Dataset:\n")
+print(prop.table(table(testSet_crt$depvar)))  
+```
+
+### Set control for 10-fold cross validation
+
+```{r}
+myCtrl_cart <- trainControl(method="cv", number=10) 
+```
+
+### Compute class weights for imbalanced data
+
+```{r}
+class_counts <- table(train_crt$depvar)
+wts <- ifelse(train_crt$depvar == 0,
+              (0.5 * sum(class_counts)) / class_counts[1],
+              (0.5 * sum(class_counts)) / class_counts[2])
+```
+
+### CART Model
+
+#### Unweighted Full Tree
+```{r}
+library(rpart)
+library(rpart.plot)
+set.seed(1)
+
+full_tree <- rpart(as.factor(depvar) ~ ., 
+                   data = train_crt,
+                   method = "class",
+                   control = rpart.control(minsplit = 1, minbucket = 1, cp = 0, maxdepth = 30)) # full tree
+
+cat("Unweighted Full Tree cp Table\n")
+print(full_tree$cptable, digits = 3)
+
+cat("\nUnweighted Variable Importance\n")
+print(caret::varImp(full_tree))
+
+
+library(rpart.plot)
+prp(full_tree, 
+    type = 1,          
+    extra = 1,            
+    under = TRUE)         
+```
+
+### Prune the tree: Unweighted Best Pruned Tree
+```{r}
+set.seed(1)
+
+bp_tree <- train(as.factor(depvar) ~ ., 
+                 data = train_crt,
+                 method = "rpart",
+                 trControl = myCtrl_cart,
+                 tuneGrid = NULL)
+
+cat("Unweighted Best Pruned Tree cp Table\n")
+bp_tree$finalModel$cptable
+
+cat("\nUnweighted Variable Importance\n")
+vi <- caret::varImp(bp_tree)
+print(vi)
+
+cat("\nTREE DIAGRAM WITH NODE COUNTS\n")
+prp(bp_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+
+cat("\nTREE DIAGRAM SHOWING PROBABILTIES AND NODE PROPORTION\n")
+prp(bp_tree$finalModel, type = 1, extra = 104, under = TRUE, digits=3)
+```
+
+
+### Weighted Best Pruned Tree
+```{r}
+set.seed(1)
+w_bp_tree <- train(as.factor(depvar) ~.,  data = train_crt,
+							  	 method = "rpart",     
+							  	 trControl = myCtrl_cart,
+							  	 tuneGrid = NULL,
+									 weights = wts)  # <-- simply add the weights
+
+cat("Weighted Best Pruned Tree cp Table\n")
+w_bp_tree$finalModel$cptable
+
+cat("\nWeighted Variable Importance\n")
+print(caret::varImp(w_bp_tree))
+
+cat("\nTREE DIAGRAM WITH NODE COUNTS\n")
+prp(w_bp_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+cat("\nTREE DIAGRAM SHOWING PROBABILTIES AND NODE PROPORTION\n")
+prp(w_bp_tree$finalModel, type = 1, extra = 104, under = TRUE, digits=3)
+
+
+wb_predicted_class <- predict(w_bp_tree, testSet_crt, type = "raw")    
+wb_CM <- caret::confusionMatrix(wb_predicted_class, as.factor(testSet_crt$depvar), positive = "1")
+```
+
+
+### Performance Metrics at Default Cutoff
+
+
+### Confusion Matrix Unweighted Tree
+```{r}
+ub_predicted_class <- predict(bp_tree, testSet_crt, type = "raw")    
+ub_CM <- caret::confusionMatrix(ub_predicted_class, 
+                                as.factor(testSet_crt$depvar), positive = "1")
+
+cat("\ncM UNWEIGHTED TREE AT DEFAULT CUTOFF VALUE\n")
+ub_CM
+
+ub_F1 <- with(as.list(ub_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", ub_F1, "\n")
+```
+
+### Confusion Matrix Weighted Tree
+```{r}
+cat("\nCM WEIGHTED TREE AT DEFAULT CUTOFF VALUE\n")
+wb_CM
+
+wb_F1 <- with(as.list(wb_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", wb_F1, "\n")
+```
+
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+pred_prob_WB <- predict(w_bp_tree, testSet_crt, type = "prob")
+
+ROC_WB <- pROC::roc(as.numeric(testSet_crt$depvar), pred_prob_WB[, 2])
+opt_cut_WB <- coords(ROC_WB, "best", ret = "threshold")
+cat("Optimal Cutoff (Weighted):", opt_cut_WB$threshold, "\n")
+
+pred_class_opt_WB <- ifelse(pred_prob_WB[, 2] >= opt_cut_WB$threshold, 1, 0)
+
+CM_opt_WB <- confusionMatrix(as.factor(pred_class_opt_WB),
+as.factor(testSet_crt$depvar),
+positive = "1")
+print(CM_opt_WB)
+
+prec_WB <- unname(CM_opt_WB$byClass['Pos Pred Value'])
+recall_WB <- unname(CM_opt_WB$byClass['Sensitivity'])
+F1_WB <- 2 * ((prec_WB * recall_WB) / (prec_WB + recall_WB))
+cat("F1 Score (Weighted, Optimal Cutoff):", F1_WB, "\n")
+```
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(pROC)
+library(gains)
+
+# Convert depvar to numeric for plotting
+CT_act_numeric <- as.numeric(as.character(testSet_crt$depvar))
+
+# Predict probabilities from weighted CART
+pred_prob_CT <- predict(w_bp_tree, testSet_crt, type = "prob")[,2]
+
+# Cumulative Gains Chart
+CT_gains <- gains(CT_act_numeric, pred_prob_CT)
+
+CT_gains_plt <- ggplot() +
+geom_line(aes(x = c(0, CT_gains$cume.obs),
+y = c(0, CT_gains$cume.pct.of.total * sum(CT_act_numeric))),
+color = "blue") +
+geom_line(aes(x = c(0, nrow(testSet_crt)), y = c(0, sum(CT_act_numeric))),
+color = "red", linetype = "dashed") +
+labs(x = "# of Cases", y = "Cumulative",
+title = "Cumulative Gains Chart (Weighted CART)") +
+theme_minimal()
+
+# ROC Curve with AUC
+roc_object_CT <- roc(CT_act_numeric, pred_prob_CT)
+auc_CT <- auc(roc_object_CT)
+
+roc_plot_CT <- ggroc(roc_object_CT) +
+geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1),
+linetype = "dashed", color = "red") +
+labs(x = "1 - Specificity", y = "Sensitivity",
+title = "ROC Curve (Weighted CART)") +
+annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_CT, 4)),
+size = 5, color = "blue") +
+theme_minimal()
+
+# Display side-by-side
+grid.arrange(CT_gains_plt, roc_plot_CT, ncol = 2)
+```
+
+
+## COMPARISON ACROSS MODELS
+```{r}
+# Function to calculate permutation-based variable importance
+permutation_importance <- function(model, test_data, test_y, predict_func, n_repeats = 5) {
+  # Get baseline predictions
+  baseline_pred <- predict_func(model, test_data)
+  baseline_accuracy <- mean(baseline_pred == test_y)
+  
+  # Calculate importance for each variable
+  importance_scores <- sapply(names(test_data), function(var) {
+    scores <- numeric(n_repeats)
+    for(i in 1:n_repeats) {
+      # Permute the variable
+      test_permuted <- test_data
+      test_permuted[[var]] <- sample(test_permuted[[var]])
+      
+      # Get predictions with permuted variable
+      perm_pred <- predict_func(model, test_permuted)
+      perm_accuracy <- mean(perm_pred == test_y)
+      
+      # Importance = drop in accuracy
+      scores[i] <- baseline_accuracy - perm_accuracy
+    }
+    mean(scores)
+  })
+  
+  return(data.frame(
+    Variable = names(importance_scores),
+    Importance = as.numeric(importance_scores)
+  ))
+}
+
+# Define prediction functions for each model type
+predict_knn <- function(model, data) {
+  predict(model, data)
+}
+
+predict_nb <- function(model, data) {
+  predict(model, data)
+}
+
+predict_glm <- function(model, data) {
+  pred_prob <- predict(model, data, type = "prob")[,2]
+  ifelse(pred_prob > 0.5, "1", "0")
+}
+
+predict_tree <- function(model, data) {
+  predict(model, data, type = "raw")
+}
+
+# Calculate importance for each model
+cat("Calculating variable importance...\n")
+
+# Convert scaled data back to data frame with proper numeric columns
+testSet_scaled_df <- as.data.frame(testSet_scaled %>% dplyr::select(-depvar))
+testSet_scaled_df[] <- lapply(testSet_scaled_df, as.numeric)
+
+imp_knn <- permutation_importance(KNN_fit, 
+                                   testSet_scaled_df, 
+                                   testSet_scaled$depvar, 
+                                   predict_knn, n_repeats = 5)
+
+# Convert other test sets to proper data frames
+testSet_NB_df <- as.data.frame(testSet_NB %>% dplyr::select(-depvar))
+testSet_LR_df <- as.data.frame(testSet_LR %>% dplyr::select(-depvar))
+testSet_LR_df[] <- lapply(testSet_LR_df, as.numeric)
+testSet_crt_df <- as.data.frame(testSet_crt %>% dplyr::select(-depvar))
+
+imp_nb <- permutation_importance(nb_fit, 
+                                  testSet_NB_df, 
+                                  testSet_NB$depvar, 
+                                  predict_nb, n_repeats = 5)
+
+imp_glm <- permutation_importance(logit, 
+                                   testSet_LR_df, 
+                                   testSet_LR$depvar, 
+                                   predict_glm, n_repeats = 5)
+
+imp_tree <- permutation_importance(w_bp_tree, 
+                                    testSet_crt_df, 
+                                    testSet_crt$depvar, 
+                                    predict_tree, n_repeats = 5)
+
+# Create importance plots
+p1 <- ggplot(imp_knn, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Feature Importance - KNN", x = "Variable", y = "Importance") +
+  theme_minimal()
+
+p2 <- ggplot(imp_nb, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "forestgreen") +
+  coord_flip() +
+  labs(title = "Feature Importance - Naive Bayes", x = "Variable", y = "Importance") +
+  theme_minimal()
+
+p3 <- ggplot(imp_glm, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "coral") +
+  coord_flip() +
+  labs(title = "Feature Importance - Logistic Regression", x = "Variable", y = "Importance") +
+  theme_minimal()
+
+p4 <- ggplot(imp_tree, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  coord_flip() +
+  labs(title = "Feature Importance - Weighted CART", x = "Variable", y = "Importance") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+**STUDENT: interpret comparison output**
+
+The variable importance analysis reveals which predictors most strongly influence each model's classification decisions. Higher importance scores indicate that when a variable is randomly shuffled, the model's accuracy drops significantly, demonstrating that variable's critical role in predictions. Comparing across models helps identify consistently important features (like certifications or feedback) versus model-specific dependencies, providing insight into which characteristics most reliably distinguish top-performing sales representatives.
+
+```{r}
+# ========================================
+# RESIDUALS ANALYSIS
+# ========================================
+
+# Function to calculate residuals for classification models
+calculate_residuals <- function(actual, predicted_probs) {
+  # Convert factor to numeric (0/1)
+  if(is.factor(actual)) {
+    actual_numeric <- as.numeric(as.character(actual))
+  } else {
+    actual_numeric <- actual
+  }
+  # Residual = actual - predicted probability
+  residuals <- actual_numeric - predicted_probs
+  return(residuals)
+}
+
+# Get predictions (probabilities) for each model
+pred_knn <- predict(KNN_fit, testSet_scaled %>% dplyr::select(-depvar), type = "prob")[, 2]
+pred_nb <- predict(nb_fit, testSet_NB %>% dplyr::select(-depvar), type = "prob")[, 2]
+pred_glm <- predict(logit, testSet_LR %>% dplyr::select(-depvar), type = "prob")[, 2]
+pred_tree <- predict(w_bp_tree, testSet_crt %>% dplyr::select(-depvar), type = "prob")[, 2]
+
+# Calculate residuals
+residuals_knn <- calculate_residuals(testSet_scaled$depvar, pred_knn)
+residuals_nb <- calculate_residuals(testSet_NB$depvar, pred_nb)
+residuals_glm <- calculate_residuals(testSet_LR$depvar, pred_glm)
+residuals_tree <- calculate_residuals(testSet_crt$depvar, pred_tree)
+
+# Create residual plots
+p1 <- ggplot(data.frame(ids = 1:length(residuals_knn), residuals = residuals_knn), 
+             aes(x = ids, y = residuals)) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Residuals - KNN", x = "Observation ID", y = "Residuals") +
+  theme_minimal()
+
+p2 <- ggplot(data.frame(ids = 1:length(residuals_nb), residuals = residuals_nb), 
+             aes(x = ids, y = residuals)) +
+  geom_point(alpha = 0.5, color = "forestgreen") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Residuals - Naive Bayes", x = "Observation ID", y = "Residuals") +
+  theme_minimal()
+
+p3 <- ggplot(data.frame(ids = 1:length(residuals_glm), residuals = residuals_glm), 
+             aes(x = ids, y = residuals)) +
+  geom_point(alpha = 0.5, color = "coral") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Residuals - Logistic Regression", x = "Observation ID", y = "Residuals") +
+  theme_minimal()
+
+p4 <- ggplot(data.frame(ids = 1:length(residuals_tree), residuals = residuals_tree), 
+             aes(x = ids, y = residuals)) +
+  geom_point(alpha = 0.5, color = "purple") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Residuals - Weighted CART", x = "Observation ID", y = "Residuals") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+**STUDENT: interpret comparison output**
+
+The residual plots visualize prediction errors for each model, where residuals represent the difference between actual values and predicted probabilities. Points clustered near zero indicate accurate predictions, while positive residuals show cases where the model under-predicted (actual was 1 but model gave low probability) and negative residuals show over-predictions (actual was 0 but model gave high probability). Random scatter around zero suggests good model fit, whereas systematic patterns or clustering away from zero may indicate the model struggles with certain types of cases or misses important relationships in the data.
+
+```{r}
+# ========================================
+# PERFORMANCE METRICS TABLE
+# ========================================
+
+model_metrics <- data.frame(
+  Model = c("KNN", "Naive Bayes", "Logistic Regression", "Weighted CART"),
+  Accuracy = c(
+    unname(CM_opt_KNN$overall['Accuracy']),
+    unname(CM_opt_NB$overall['Accuracy']),
+    unname(LR_opt_CM$overall['Accuracy']),
+    unname(CM_opt_WB$overall['Accuracy'])
+  ),
+  Sensitivity = c(
+    unname(CM_opt_KNN$byClass['Sensitivity']),
+    unname(CM_opt_NB$byClass['Sensitivity']),
+    unname(LR_opt_CM$byClass['Sensitivity']),
+    unname(CM_opt_WB$byClass['Sensitivity'])
+  ),
+  Specificity = c(
+    unname(CM_opt_KNN$byClass['Specificity']),
+    unname(CM_opt_NB$byClass['Specificity']),
+    unname(LR_opt_CM$byClass['Specificity']),
+    unname(CM_opt_WB$byClass['Specificity'])
+  ),
+  AUC = c(auc_knn, auc_nb, auc_LR, auc_CT),
+  F1_Score = c(f1_score_KNN, f1_score_opt_NB, LR_opt_F1_score, F1_WB)
+)
+
+# Round for readability
+model_metrics[, -1] <- round(model_metrics[, -1], 4)
+
+print(model_metrics)
+
+cat("\n=== INTERPRETATION GUIDE ===\n")
+cat("Accuracy: Overall correct predictions\n")
+cat("Sensitivity: True positive rate (ability to identify high performers)\n")
+cat("Specificity: True negative rate (ability to identify low performers)\n")
+cat("F1_Score: Harmonic mean of precision and recall (balanced measure)\n")
+cat("AUC: Area under ROC curve (overall discriminatory power, 0.5=random, 1.0=perfect)\n\n")
+
+# Find best model for each metric
+cat("=== BEST MODELS BY METRIC ===\n")
+for(metric in names(model_metrics)[-1]) {
+  best_idx <- which.max(model_metrics[[metric]])
+  cat(sprintf("%s: %s (%.4f)\n", 
+              metric, 
+              model_metrics$Model[best_idx], 
+              model_metrics[[metric]][best_idx]))
+}
+
+# Visualize metrics comparison
+metrics_long <- pivot_longer(model_metrics, 
+                             cols = -Model, 
+                             names_to = "Metric", 
+                             values_to = "Value")
+
+ggplot(metrics_long, aes(x = Model, y = Value, fill = Model)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Metric, scales = "free_y", ncol = 3) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +
+  labs(title = "Model Performance Comparison Across Metrics",
+       y = "Metric Value") +
+  scale_fill_brewer(palette = "Set2")
+```
+
+**STUDENT: Based on the performance metrics, which model would you recommend for ACE-Tech's recruitment strategy and why?**
+
+*Consider the business context: Mr. Diaz wants to identify characteristics that distinguish top performers (those with Recommendation Scores of 9 or 10) to improve recruitment. Which metrics are most important for this goal? Should ACE-Tech prioritize identifying all potential top performers (high sensitivity) or avoiding false positives (high specificity)? How does model interpretability factor into the decision?*
+
+
+### Identify your Best, Final Model
+
+STUDENT: Choose a final model here. Performance metrics are an important consideration as is the ability to communicate findings to support your client recommendations.\
+
+# DEPLOYMENT
+
+## Summarize Findings
+
+STUDENT: Articulate insights -- especially from the model and model drivers. (Avoid repeating model details -- focus on what you learned and why that's important to the client.)\
+
+## Business Recommendations and Suggested client actions
+
+STUDENT: This is a *business* recommendation in the context of the original business problem. Connect the insights from across the model to inform the client decision and course of action.\
+
+# REFERENCES
+
+## R and Packages
+
+```{r}
+cat(as.character(R.version.string),"\n")
+
+cat("\nR Packages Used:\n")
+names(sessionInfo()$otherPkgs)
+```
+
+## Other References
+
+Jaggia, S., Kelly, A., Lertwachara, K., & Chen, L. (2023). *Business analytics: Communicating with numbers* (2nd Ed.). McGraw-Hill.

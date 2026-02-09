@@ -1,0 +1,429 @@
+---
+title: "LM 5 - LAB: LPM and Logistic Regression"
+subtitle: "LAB 5"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+editor: source
+---
+
+# BUSINESS UNDERSTANDING
+The marketing department of a grocery retailer wants to understand the factors that contributed to an email campaign response. They would like to use this model to select customers for future similar email campaigns.\
+
+
+------------------------------------------------------------------------
+
+# DATA UNDERSTANDING AND DATA PREP
+Each row represents a customer who received an email as part of a campaign.\
+
+**Variables**
+
+response = binary indicating whether the customer responded to the email campaign (made a purchase)\
+recency = number of days since last purchase prior to email campaign start \
+frequency = number of purchases (all channels) in the last year prior to the start of the email campaign\
+total_spend = total dollars spent by customer customer (all changes) in last year prior to campaign\
+NumWebVisits = number of website visits in the month prior to the campaign\
+kidhome = number of kids in the home\
+
+
+```{r}
+options(scipen = 9999, digits=6)
+
+load("LAB_5.RData")
+
+library(janitor)
+mydata <- clean_names(retail) 
+head(mydata)
+tail(mydata)
+str(mydata)
+```
+
+## Basic EDA
+Conduct basic EDA using `DataExplorer`\
+Specifically look at barcharts, histograms, and the numerics by the depvar in boxplots.\
+```{r}
+library(DataExplorer)
+plot_bar(mydata)
+plot_histogram(mydata)
+
+#Proportion of depvar
+prop.table(table(mydata$response))
+```
+Comment:  \
+
+The data shows that the response variable is highly imbalanced, with only about 15% of customers responding to the campaign and 85 did not.
+
+The numerical features display diverse distributions, with variables like total_spend showing positive skew and n_web_visits showing negative skew and potential outliers, while recency is more concentrated.
+
+
+## Munge: Variable Transformation
+Total_Spend has a wide distribution. Create a new variable that is the log of Total Spend, and then delete (drop) the original Total_Spend from the dataset. Such a transformation is good practice for a sales for dollar variable.\
+```{r}
+library(dplyr)
+#table(mydata$total_spend)
+mydata <- mydata %>%
+  mutate(log_total_spend = log(total_spend)) %>%
+  select(-total_spend)
+
+```
+Comment:   \
+
+The variable total_spend was transformed to address its wide and highly skewed distribution. A new variable, log_total_spend, was created by applying the natural logarithm to total_spend, which helps reduce skewness, lessen the impact of extreme outliers, and make the distribution more suitable for modeling. The original total_spend column was removed from the dataset to avoid redundancy.
+
+## Summary Statistics
+Run descriptive statistics and a correlation matrix. Comment on your findings.\
+```{r}
+library(corrplot) 
+
+summary(mydata)
+corr_matrix <- cor(mydata %>% select(where(is.numeric)))
+corr_matrix
+
+corrplot(corr_matrix, method = "circle", type = "upper", tl.col = "black", tl.srt = 45)
+
+```
+Comment: \
+
+- The descriptive statistics show that the majority of customers did not respond to the email campaign, with a mean **response rate** of about 15%. Most customers have zero children at home (**kidhome**), a moderate number of purchases in the last year (median **frequency** = 15), and a median **recency** of 49 days. Website visits in the prior month are generally low, with a median of 6 visits, and **log-transformed total spend**
+ranges from 1.61 to 7.83, reflecting substantial variability in customer spending.
+
+- The correlation matrix indicates that **log_total_spend** (0.213) and **frequency** (0.155) are positively associated with response, suggesting that higher-spending and more frequent customers are more likely to respond to the campaign.
+
+- In contrast, **recency** (-0.198) has a negative relationship, indicating that customers who purchased more recently
+are more likely to respond. 
+
+- Variables such as **kidhome** (-0.080) and **num_web_visits_month** (-0.004) show little
+relationship with response.
+
+- Frequency and log_total_spend are highly correlated (0.875), and kidhome is negatively correlated with both, indicating multicollinearity.
+
+- These findings suggest that **log_total_spend** and **recency** are likely strong predictors of campaign response, but care should be taken when including highly correlated variables together in a model.
+
+    
+  
+## Assess depvar balance
+Create a table that shows the prevalence of the depvar, response, in the dataset.  Comment on your findings.\
+```{r}
+resp_table <-table(mydata$response)
+resp_percentage<-prop.table(resp_table)*100
+resp_summary<-data.frame(Frequency=resp_table, Percentage = resp_percentage)
+resp_summary
+```
+Comment: \
+  
+The dataset shows that the dependent variable response is highly imbalanced: 1,906 customers (**85.1%**) did not respond (0), while only 334 customers (**14.9%**) responded (1) to the email campaign. This indicates that most customers do not engage with the campaign, which is important to consider when building predictive models, as accuracy alone may be misleading.
+
+## Partition 60/40
+
+Since our dataset is unbalanced, check our partitions to see that they're similar.\
+In this case we are using set.seed to 4.\
+Check the partitions for balance compared to the full dataset. They should be close.\
+```{r}
+library(caret)
+set.seed(4)
+myIndex<- createDataPartition(mydata$response, p=0.6, list=FALSE)
+trainSet <- mydata[myIndex,]
+testSet <- mydata[-myIndex,]
+
+prop.table(table(trainSet$response))
+prop.table(table(testSet$response))
+
+```
+Comment:   \
+
+The 60/40 partition of the dataset maintains the original imbalance in the response variable. In the training set, 84.8% of customers did not respond and 15.2% responded, while in the test set, 85.5% did not respond and 14.5% responded. These proportions are very close to the overall dataset distribution, indicating that both partitions are representative and suitable for model training and evaluation.
+
+# MODELING
+
+## Logistic Regression Model
+Use the `caret` package to train a LR model using 10-fold cross-validation.\
+Look at the output and check for multicollinearity.\
+```{r}
+library(caret)
+
+myCtrl <- trainControl(method="cv", number=10)
+set.seed(1)
+logit <- train(as.factor(response) ~., data = trainSet, 
+												method = "glm",family="binomial",
+												trControl = myCtrl)
+summary(logit)
+
+car::vif(logit$finalModel)
+```
+Comment:  \
+- A logistic regression model was trained to predict whether a customer would respond to the email campaign. The model used all available predictors in the training set and estimated the relationship between each feature and the probability of response.
+
+- The results show that all predictors are statistically significant in explaining the likelihood of a customer responding to the email campaign. **log_total_spend** has the strongest positive effect, indicating that higher-spending customers are much more likely to respond. **Frequency** has a negative coefficient (-0.094, p < 0.001), suggesting that, after controlling for spending, customers who purchase more frequently are slightly less likely to respond. **recency** is also negative (-0.021, p < 0.001), meaning customers who purchased more recently are more likely to respond. **kidhome** (0.534, p = 0.007) and **num_web_visits_month** (0.162, p < 0.001) have positive effects, indicating that having children at home and more website visits slightly increase response probability.
+
+- Variance Inflation Factor (VIF) values indicate moderate multicollinearity for **log_total_spend** (4.46) and **frequency** (3.11), which aligns with earlier correlation findings. 
+- The model shows a reduction in deviance from the null model (Null deviance = 1144.53, Residual deviance = 988.97) and an AIC of 1001, indicating a reasonable fit for predicting email campaign response.
+
+
+### Calculate odds ratios
+Interpret the odds ratio for all five predictors.\
+```{r}
+exp(coef(logit$finalModel))
+```
+Fully interpret each of the coefficients. Do they make sense? Explain.\
+
+**Frequency:** Odds ratio ~**0.91**; each additional purchase slightly lowers the odds of responding by about **9%**, suggesting frequent buyers are less influenced by emails.  
+
+**Recency:** Odds ratio ~**0.98**; each additional day since the last purchase decreases the odds of responding by about **2%**, so customers who purchased more recently are slightly more likely to respond.  
+
+**Kids at home:** Odds ratio ~**1.71**; households with children have about **71% higher odds** of responding.  
+
+**Web Visits:** Odds ratio ~**1.18**; each additional website visit increases the odds of response by about **18%**.  
+
+**Log of Total Spend:** Odds ratio ~**3.36**; higher-spending customers are over **3 times more likely** to respond.  
+
+Overall, **log_total_spend** and **kidhome** have the strongest positive effects on the likelihood of response, while **frequency** and **recency** have smaller negative impacts, consistent with expected customer behavior patterns.
+
+  
+### Variable Importance
+
+```{r}
+library(caret)
+caret::varImp(logit$finalModel)
+```
+Comment:  \
+
+- The variable importance results show which predictors contribute most to the logistic regression model in explaining customer response. **log_total_spend** is the most important variable (importance = 8.33), indicating that spending level is the strongest driver of response. **recency** (7.14) is the next most influential, showing that how recently a customer purchased also strongly affects likelihood to respond. **frequency** (4.44) and **num_web_visits_month** (4.31) have moderate importance, while **kidhome** (2.69) has the least influence.
+
+- Overall, **log_total_spend** and **recency** are the key factors in predicting email campaign response.
+
+
+### Assess LR Model Fit
+
+#### Global likelihood ratio test (LRT)
+
+Run the LRT test.  Similar to the example, you will need to re-run the logit without cross validation just for this test, because `caret` doesn't store everything you need.\
+
+```{r}
+# rerun the logistic regression without cross validation
+logit_full <- glm(response ~ ., family = binomial(link = "logit"), data = trainSet)
+
+# Create the null model (intercept only) using glm() directly
+logit_null <- glm(response ~ 1, family = binomial(link = "logit"), data = trainSet)
+
+# Run the LRT
+anova(logit_full, logit_null, test = "LRT")
+```
+Comment: \
+
+The global likelihood ratio test compares the full model with all predictors to a model that only has the intercept. The test shows a large improvement in fit (deviance reduced by 155.6) and a very small p-value (p < 0.001), meaning the full model predicts customer responses much better than a model with no predictors. This confirms that frequency, recency, kidhome, num_web_visits_month, and log_total_spend all help explain who is likely to respond to the email campaign.
+
+#### Model Fit Metrics
+
+Again, `caret` doesn't retain content we need to calculate PseudoR2, so use the output you created above using glm().\
+
+```{r}
+library(DescTools)
+library(formattable)
+McFadden <- formattable::comma(PseudoR2(logit_full, "McFadden"), digits = 4)
+Nagel <- formattable::comma(PseudoR2(logit_full, "Nagel"), digits = 4)
+McFadden; Nagel; 
+cat("AIC:", logit$finalModel$aic,"\n")
+```
+
+Comment on each of the tests metrics: \
+
+- The model fit metrics show that the logistic regression explains a moderate amount of variation in customer response.
+- The **McFadden pseudo-R²** is 0.136 and the **Nagelkerke pseudo-R²** is 0.191, indicating that the predictors account for roughly 13–19% of the variability in response. 
+- The AIC of 1001 reflects the overall quality of the model; lower values indicate a better fit. These results suggest the model captures important patterns in customer behavior but there may still be other factors influencing responses.
+
+#### Comparing probabilities
+
+What are the probabilities that a customer will respond to an email campaign if they had a recency=0, frequency=10, 5 web visits, log of total spend = 5.6, and either 0 OR 1 kid at home?\
+  
+!!Note that you will need to use income=as.numeric(c(NA,NA)) for the income variable, since it is stored still as a predictor, even if it's not used in the model.\
+
+```{r}
+predict(logit, 
+        data.frame(recency = c(0, 0), 
+                   frequency = c(10, 10), 
+                   num_web_visits_month = c(5, 5), 
+                   log_total_spend = c(5.6, 5.6), 
+                   kidhome = c(0, 1), 
+                   income = as.numeric(c(NA, NA))), 
+        type = "prob")  
+```
+Comment:  \
+
+The predicted probabilities show how likely a customer is to respond to the email campaign based on their characteristics. 
+
+A customer with **recency = 0**, **frequency = 10**, **5 web visits**, and **log_total_spend = 5.6** has a **28.9% chance of responding** if there are **no kids at home**, and a **41.0% chance** if there is **one child at home**. This indicates that having children in the household increases the likelihood of responding, while other factors like recent purchases, purchase frequency, web activity, and spending also play important roles in predicting response.
+
+
+------------------------------------------------------------------------
+
+# EVALUATION
+
+## Confusion Matrix -- Default Cutoff of 50%
+Creat the CM at the default. Compute the F1 Score.\
+```{r}
+logit_class <- predict(logit, newdata=testSet, type = "raw") # Score and assign the probabilities to a class at 50% cutoff
+CM_def <- confusionMatrix(logit_class, as.factor(testSet$response), positive = '1')
+CM_def
+
+# Calculate the F1 Score
+precision <- unname(CM_def$byClass['Pos Pred Value']) # synonyms
+recall    <- unname(CM_def$byClass['Sensitivity'])   # synonyms
+f1_score_base_def <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score_base_def, "\n")
+
+```
+Comment:  Your assessment should be  thorough.\
+
+
+- The confusion matrix at the default 50% cutoff shows the model predicts most customers as unlikely to respond to the email campaign.  
+- Out of 130 customers who actually responded to the email, only **8 were correctly identified** (true positives), while **122 responders were missed** (false negatives).  
+- The model accurately identifies non-responders (**Specificity = 98.6%**) but performs poorly at detecting likely responders (**Sensitivity = 6.2%**).  
+-The **Precision is 42.1%**, meaning that when the model predicts a customer will respond, it is correct less than half of the time.  
+- The **Balanced Accuracy is 52.4%**, showing the model performs only slightly better than random at distinguishing responders from non-responders.  
+- The **F1 Score of 0.107** reflects low precision (42.1%) and low recall, indicating the model struggles to correctly target customers who will engage with the email.  
+- Overall accuracy appears high (85.2%), but this is misleading because most customers did not respond.  
+- Using the default 50% cutoff is not effective for predicting email responders; adjusting the threshold or applying resampling techniques could better identify customers likely to engage with the campaign.
+
+### Confusion Matrix -- Threshold Tuning Method
+If you think you have an issue with imbalance, complete this step to use the Threshold Tuning Method to address it.\
+Find the Optimal cutoff (due to depvar imbalance).\
+Recalculate the Confusion Matrix with the new cutoff value.\
+
+```{r}
+library(pROC)
+### Confusion Matrix -- Threshold Tuning Method
+
+
+library(pROC)
+
+# Score the model to get the predicted probabilities (not the predicted class) from the model
+logit_class_prob <- predict(logit, newdata = testSet, type = 'prob')
+
+# Create the ROC curve (logit_class_prob has 2 columns, take the second one that has the probability of 1)
+roc_curve <- roc(testSet$response, logit_class_prob[,2])
+
+# Find and report the optimal cutoff
+optimal_cutoff <- coords(roc_curve, "best", ret = "threshold")  # best uses Youden method max(sensitivity+specificity) to balance
+cat("CONFUSION MATRIX AT OPTIMAL CUTOFF VALUE OF:", optimal_cutoff$threshold, "\n\n")
+
+# Rescore using the new optimal cutoff
+logit_class_opt <- ifelse(logit_class_prob[,2] >= optimal_cutoff$threshold, 1, 0)
+
+# New Confusion Matrix
+CM_base_opt <- confusionMatrix(as.factor(logit_class_opt), as.factor(testSet$response), positive = '1')
+CM_base_opt
+
+# Calculate the F1 Score
+precision <- unname(CM_base_opt$byClass['Pos Pred Value'])  # synonyms
+recall    <- unname(CM_base_opt$byClass['Sensitivity'])      # synonyms
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score, "\n")
+
+
+```
+
+Comment:  This should be thorough. \
+
+- Using the Threshold Tuning Method, the optimal cutoff for predicting email responders was **0.150**, much lower than the default 0.5, to account for the imbalance in response rates.  
+- The new confusion matrix shows a better balance between detecting responders and non-responders. Out of 130 actual responders, **102 were correctly identified** (true positives) and only **28 were missed** (false negatives).  
+- The model now has a **Sensitivity of 78.5%**, meaning it correctly identifies most customers who will respond to the email.  
+- The **Specificity is 69.3%**, so the model still maintains decent accuracy in predicting non-responders.  
+- **Precision is 30.3%**, meaning that when the model predicts a customer will respond, it is correct about one-third of the time.  
+- **Balanced Accuracy is 73.9%**, indicating a much better overall ability to distinguish responders from non-responders compared to the default cutoff.  
+- The **F1 Score increased to 0.437**, showing improved performance in targeting likely email responders.  
+- **Conclusion:** Adjusting the cutoff to 0.15 significantly improves the model’s ability to identify customers likely to respond to the campaign. This lower threshold allows marketing efforts to better focus on potential responders, improving campaign effectiveness despite some false positives.
+
+## Classification Model Performance Charts
+
+### GAINS TABLE
+
+```{r, gains chart}
+library(gains)
+logit_class_prob <- predict(logit, newdata = testSet, type = 'prob') #!!!!!!! change model here
+testSet$response <- as.numeric(as.character(testSet$response))
+gains_table <- gains(testSet$response, logit_class_prob[,2])
+gains_table
+```
+
+- The gains table shows how well the logistic regression model identifies likely email responders when customers are ranked by predicted probability.  
+- The first 10% of customers (top decile) captured **30.8% of all responders**, indicating that the model effectively concentrates likely responders at the top.  
+- The cumulative lift in the top decile is **3.1**, meaning targeting the top 10% of predicted customers is over three times more effective than random selection.  
+- As we include more customers beyond the top deciles, the additional responders captured grow more slowly (e.g., 51.5% of responders in the top 20%, 67.7% in the top 30%), showing that targeting beyond the top-ranked customers is less efficient.
+- The average probability of response drops from 0.45 in the top 10% to near 0.00 in the bottom decile, meaning the model clearly distinguishes customers likely to respond from those unlikely to respond.
+
+
+### CUMULATIVE GAINS CHART
+  
+```{r}
+plot(c(0, gains_table$cume.pct.of.total * sum(testSet$response)) ~ c(0, gains_table$cume.obs), 
+     xlab = '# of Cases', 
+     ylab = "Cumulative Positives", 
+     type = "l", 
+     main = "Cumulative Gains Chart")
+lines(c(0, sum(testSet$response)) ~ c(0, dim(testSet)[1]), col = "red", lty = 2)
+```
+
+The Cumulative Gains Chart shows that the classification model performs much better than random selection at identifying customers likely to respond to the email campaign. The black curve, representing the model, rises steeply in the top-ranked customers, indicating that positive responses are concentrated among a small subset. For example, by targeting only the top ≈200 customers (≈23% of the test set), the model captures about 70–80 of the 130 total responders, whereas random selection would capture only around 30. This demonstrates a clear lift over the baseline and highlights the model’s value in improving marketing efficiency. 
+Overall, the chart confirms that the model effectively prioritizes likely responders and provides actionable insights for targeted email marketing.
+
+### BARPLOT DECILE-WISE LIFT CHART
+
+```{r, decilewise lift as barplot}
+barplot(gains_table$mean.resp/mean(testSet$response), names.arg=gains_table$depth, 
+        xlab="Percentile", ylab="Lift", ylim=c(0,3), col="sandybrown", main="Decile-Wise Lift Chart")
+abline(h=c(1),col="seagreen")
+```
+The Decile-Wise Lift Chart shows that the model performs much better than random selection in the top segments of customers. The **top 10% of customers (first decile)** have a response rate approximately **three times higher** than the overall average, while the **second and third deciles** also perform well, with lifts of about **2.0** and **1.7**, respectively. After the third decile, the lift drops sharply, reaching near **1.0** by the fourth decile and falling below **1.0** for the remaining segments. This indicates that most positive responses are concentrated among the **top 30% of customers**, and targeting beyond this point provides little additional benefit. For the email campaign, this means the marketing team can **maximize response rates** and **campaign efficiency** by focusing outreach on the **top 30–40% of customers** as ranked by the model, reducing costs and improving **return on investment*
+*
+### ROC Curve with AUC
+
+```{r, ROC}
+library(pROC)
+roc_object <- roc(testSet$response, logit_class_prob[,2])
+plot.roc(roc_object, main="ROC Curve", xlab = "1 - Specificity (False Positive Rate)")
+
+roc_object$auc
+```
+
+Comment:  \
+
+The ROC curve for the logistic regression model shows good discriminative ability in predicting which customers are likely to respond to the **email campaign**. The curve rises steeply from the bottom-left and stays well above the diagonal reference line representing random chance, indicating that the model effectively separates responders from non-responders.
+
+- The **Area Under the Curve (AUC) is 0.791**, which falls in the "good" range. Practically, this means that the model will correctly rank a randomly chosen responder higher than a non-responder approximately **79% of the time**. This demonstrates that the model has **reasonably strong predictive power**, although there is still room for improvement. 
+
+- Overall, the ROC and AUC results confirm that the model can meaningfully guide targeted email marketing efforts by prioritizing customers most likely to respond.
+
+------------------------------------------------------------------------
+
+# DEPLOYMENT
+
+The key goal was to improve campaign efficiency reaching more customers likely to respond while reducing wasted outreach to unlikely responders.
+
+The logistic regression model provides a clear framework for **targeted email marketing**. By ranking customers based on predicted probabilities of response, the marketing team can focus outreach on the most promising segments. For example, the top 30% of customers, as identified by the model, include the majority of likely responders. 
+
+Two predictors stood out: customers who **spend more overall** and those who **purchased more recently** were significantly more likely to respond. 
+
+At the default threshold, the model avoided sending emails to customers unlikely to respond, but it also failed to identify most customers who were likely to make a purchase, limiting the campaign’s effectiveness. After lowering the cutoff to 0.15, the model was able to correctly identify over 78% of actual responders, showing that a small adjustment can greatly improve the campaign’s reach and revenue potential.
+
+The **ROC curve (AUC = 0.791)** demonstrated that the model has **good ability to distinguish between responders and non-responders**, well above random guessing. Gains and lift analysis confirmed that the **top-ranked customers hold disproportionate value**: the top 10% of customers were over three times more likely to respond than average, and the top 30% captured nearly two-thirds of all responders. This illustrates that the model is not just accurate, but also practical in identifying where marketing resources should be focused.
+
+Key variables such as log_total_spend, recency, and kidhome provide actionable insights into customer behavior. High-spending customers who purchased recently and households with children are most likely to respond, allowing the marketing team to tailor messages or promotions for these groups. Website visits and purchase frequency can also guide the design of more personalized campaigns.
+
+Overall, the  model successfully identifies the customers most likely to respond, allowing the marketing team to **maximize response rates and minimize wasted effort**. By leveraging insights from key predictors like total spend, recency, and household composition, the model not only predicts response likelihood but also informs **strategic decisions for personalized marketing**, ultimately supporting more efficient and effective campaigns.
+
+---
+
+## RECOMMENDATIONS
+
+1. **Adopt a lower decision threshold** (around 0.15) for classifying responders, since it balances the trade-off between finding true responders and minimizing wasted outreach.  
+2. **Target the top 20-30% of customers ranked by the model**, as this segment consistently delivers the highest concentration of positive responses.  
+3. **Use key predictors for tailored messaging** — high-spending and recent customers should receive premium or loyalty-focused campaigns, while families with children and frequent website visitors may be receptive to promotions tied to convenience or household value.  
+4. Customers with low scores should receive fewer or lower-cost touches, such as general newsletters instead of tailored promotions.  
+5. To strengthen predictive accuracy in the future, the retailer could add additional features, such as **customer demographics, product category preferences, or loyalty program engagement**, to capture more dimensions of behavior.    
+

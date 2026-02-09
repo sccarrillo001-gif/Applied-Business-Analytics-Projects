@@ -1,0 +1,281 @@
+---
+title: "Lab 9.1 Regression with Interaction"
+author: "Gabriela Chajon C"
+date: "Due Date: October 12, 2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r}
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(car)       #for the VIF
+library(Metrics)   # for regression evaluation like RMSE
+library(summarytools)
+library(dlookr)     #diagnose_outlier
+library(formattable)
+library(questionr)
+library(caret)
+library(psych)
+```
+
+## BUSINESS UNDERSTANDING
+
+Jack Person, the Executive Director of a health public policy organization, is exploring the social determinants of health—factors such as income, education, and social connections that influence the health of a population. His team is considering a  campaign to promote "Social Connectedness" as a means to improve overall health outcomes.
+He wants to understand the influence that Social Connectedness has on health, while controlling for other factors such as income and education.
+
+# DATA UNDERSTANDING
+
+```{r}
+library(readxl)
+health_factors <- read_excel("LAB_9.xlsx", sheet = "Health_Factors")
+head(health_factors)
+```
+## DATA UNDERSTANDING
+
+### Summary Statistics
+```{r}
+psych::describe(health_factors, fast=TRUE)
+```
+Health (1–100): Mean = 75.2, SD = 17.0, range = 50–98. The distribution is nearly symmetric with minimal skew (−0.12) and light tails. Variance is moderate, indicating enough spread for modeling Health as a continuous dependent variable.
+
+Social (1–100): Mean = 77.6, SD = 11.9, range = 58–98. Skew (0.10) and kurtosis (−1.24) confirm a symmetric, light-tailed distribution. Data are stable and suitable for linear estimation without transformation.
+
+Income ($1,000s): Mean = 168.8, SD = 86.4, range = 21–320. The distribution is approximately symmetric (skew ≈ 0), showing wide variability across observations. Centering Income may improve interpretation in interaction models.
+
+College (0/1): The variable takes values 0 or 1, with about 56% coded as 1. The binary structure allows inclusion as a categorical predictor or interaction term in regression analysis.
+
+#### Variable distributions\
+```{r}
+plot_intro(health_factors)
+plot_bar(health_factors)
+plot_histogram(health_factors)
+plot_correlation(health_factors)
+
+```
+The dataset contains 120 complete records with no missing observations across all variables. All columns are continuous.\
+
+**Distributions**
+Health is roughly uniform with bigger clusters around 65–70 and 85–95. Social is evenly spread with a slight peak near 70–75. Income is nearly symmetric with most values between $120k–$220k and a mild right tail. College shows about 68 with a degree (1) and 52 without (0). Overall, variables are well-behaved with no major skew or outliers, suitable for linear modeling.
+Health, Income, and Social display near-symmetric shapes with no extreme outliers.
+
+**Correlation matrix**
+The correlation matrix shows strong positive relationships between Health and College (r = 0.74) and between Health and Income (r = 0.69), indicating that both education and income are strongly associated with better health outcomes. Health and Social have a weaker correlation (r = 0.16), suggesting social connectedness may influence health indirectly or through interaction with other factors. Income and College are moderately correlated (r = 0.32), while Social shows minimal correlation with either, supporting low multicollinearity.
+
+#### Outliers
+```{r}
+outliers <- diagnose_outlier(health_factors) 
+knitr::kable(outliers, align = "c")
+boxplot(health_factors$Health, horizontal = TRUE)
+```
+There weren't any outliers seen in any of the variables. Health, Social, and Income all show consistent values with no extreme deviations, and their means remain unchanged when outliers are tested.\
+
+## Plot 1: Interaction between Social and Income
+```{r}
+# Load required libraries
+library(ggplot2)
+
+ggplot(health_factors, aes(x = Social, y = Health, color = cut(Income, breaks = 3))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Interaction Effect of Social and Income on Health",
+       x = "Social",
+       y = "Health",
+       color = "Income Level")
+```
+The interaction between Social Connectedness and Income indicates a moderating effect, meaning the slope of Social on Health varies by Income level. At lower income levels, the slope is . This relationship becomes stronger in the middle-income range, suggesting that social factors contribute more to health improvements when economic resources are moderate. At high income levels, the slope flattens.
+
+## Plot 2: Interaction between Social and College
+
+```{r}
+
+ggplot(health_factors, aes(x = Social, y = Health, color = factor(College))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Interaction Effect of Social and College on Health",
+       x = "Social",
+       y = "Health",
+       color = "College Degree (1 = Yes, 0 = No)")
+
+```
+Among individuals with a college degree, the slope of Social is clearly positive which means that higher Social scores correspond to higher predicted Health
+
+## DATA PARTITIONING
+
+```{r}
+set.seed(1)
+myIndex <- createDataPartition(health_factors$Health, p=.80, list=FALSE)
+trainSet_h <- health_factors[myIndex,]
+validationSet_h_h <- health_factors[-myIndex,]
+
+mean(health_factors$Health)
+mean(trainSet_h$Health)
+mean(validationSet_h_h$Health)
+
+```
+Partitioned data into training (80%) and validation (20%) based on the Health variable. Train mean is 74.89 and the Validation mean is 76.65 indicating  a well-balanced split
+
+## MODELING
+
+#### Model 1 using the Trainset partition
+
+```{r}
+model1 <- lm(Health ~ Social + Income + College, data = trainSet_h)
+
+summary(model1)
+```
+Model 1 shows statistically significant positive effects for Social, Income, and College on Health. Model fit is strong (R² = 0.8108, Adj. R² = 0.8047), with low residual dispersion (RSE = 7.55) and a highly significant joint test (F(3,93) = 132.9.
+
+- Social: Holding Income and College constant, each one-point increase in Social score is associated with a 0.1966 point increase in predicted Health. This indicates that stronger social relationships are linked to slightly higher health outcome.
+
+- Income:Holding Income and College constant, each one-point increase in Social score is associated with a 0.0899-point increase in predicted Health. This indicates that stronger social relationships are linked to slightly higher health outcome
+
+- College:Individuals with a college degree (College = 1) have Health scores approximately 20.25 points higher than those without a degree, holding other factors constant. This strong level shift implies that education is a major determinant of health status.
+
+
+#### Model 2 with interactions
+
+```{r}
+model2 <- lm(Health ~ Social + Income + College + Social*Income + Social*College, data = trainSet_h)
+
+summary(model2)
+```
+Model 2 shows the regression including interaction terms shows an overall strong fit (R² = 0.8191, Adj. R² = 0.8091 and RSE = 7.47.At the 10% significance level, Income, Social, and Social×College are significant predictors.
+
+Social (β = 0.2660) — Positive linear effect at the baseline (No College, Income = 0). A one-point increase in Social corresponds to a 0.27-point rise in Health, holding other variables constant.
+
+Income (β = 0.1871) — Positive and significant effect. Each additional $1,000 of income is associated with a 0.19-point increase in Health, controlling for other predictors.
+
+Social×Income (β = −0.00125) — Negative interaction term, though not significant at α = 0.10. The coefficient indicates that the positive effect of Social on Health decreases slightly as Income increases, suggesting a diminishing return of Social Connectedness at higher income levels.
+
+Social×College (β = 0.2379) — Positive and significant interaction. The slope of Social on Health is 0.24 units steeper for college graduates compared to non-graduates, indicating that the health benefits of social connectedness are stronger among individuals with a college degree.
+
+### Compare model fit
+Using Adjusted R², Model 2 shows a small improvement in fit over Model 1 (0.8091 vs 0.8047; RSE 7.47 vs 7.55), indicating that when adding interactions the model captured slightly more of the variation in Health that wasn’t explained by the main effects alone.
+
+# EVALUATION
+
+#### Prediction on Validation Set
+
+```{r}
+validation_clean <- validationSet_h_h %>%
+  dplyr::select(Health, Social, Income, College)
+
+pred_model1 <- predict(model1, newdata = validation_clean)
+pred_model2 <- predict(model2, newdata = validation_clean)
+
+
+validation_combined <- cbind(
+  validation_clean,
+  Pred_Model1 = pred_model1,
+  Pred_Model2 = pred_model2
+)
+
+
+head(validation_combined)
+
+```
+
+#### Model Performance Metrics
+
+#### Model 1 Metrics
+```{r}
+library(Metrics)   # for RMSE() and MAE()
+library(dplyr)
+
+
+rmse_model1 <- RMSE(validation_combined$Pred_Model1, validation_combined$Health)
+mae_model1  <- MAE(validation_combined$Pred_Model1, validation_combined$Health)
+mad_model1  <- mean(abs(validation_combined$Pred_Model1 - validation_combined$Health))
+mape_model1 <- mean(abs((validation_combined$Health - validation_combined$Pred_Model1) /
+                         validation_combined$Health)) * 100
+
+cat("Metrics for Model 1:\n")
+cat("RMSE:", round(rmse_model1, 3), "\n")
+cat("MAE:",  round(mae_model1, 3),  "\n")
+cat("MAD:",  round(mad_model1, 3),  "\n")
+cat("MAPE:", round(mape_model1, 3), "%\n\n")
+```
+#### Model 2 Metrics
+```{r}
+rmse_model2 <- RMSE(validation_combined$Pred_Model2, validation_combined$Health)
+mae_model2  <- MAE(validation_combined$Pred_Model2, validation_combined$Health)
+mad_model2  <- mean(abs(validation_combined$Pred_Model2 - validation_combined$Health))
+mape_model2 <- mean(abs((validation_combined$Health - validation_combined$Pred_Model2) /
+                         validation_combined$Health)) * 100
+
+cat("Metrics for Model 2:\n")
+cat("RMSE:", round(rmse_model2, 3), "\n")
+cat("MAE:",  round(mae_model2, 3),  "\n")
+cat("MAD:",  round(mad_model2, 3),  "\n")
+cat("MAPE:", round(mape_model2, 3), "%\n")
+```
+
+## REC CURVE
+```{r}
+tolerance_levels <- seq(
+  0,
+  max(c(abs(validation_combined$Health - validation_combined$Pred_Model1),
+        abs(validation_combined$Health - validation_combined$Pred_Model2))),
+  length.out = 100
+)
+
+rec_curve <- function(actual, predicted) {
+  sapply(tolerance_levels, function(tol) mean(abs(actual - predicted) <= tol))
+}
+
+rec_model1 <- rec_curve(validation_combined$Health, validation_combined$Pred_Model1)
+rec_model2 <- rec_curve(validation_combined$Health, validation_combined$Pred_Model2)
+
+# Plot REC curves
+plot(
+  tolerance_levels, rec_model1, type = "l", col = "blue", lwd = 2,
+  xlab = "Error Tolerance (τ, Health points)",
+  ylab = "Proportion within Tolerance",
+  main = "REC Curves for Model 1 and Model 2"
+)
+lines(tolerance_levels, rec_model2, col = "red", lwd = 2)
+legend("bottomright", legend = c("Model 1", "Model 2"),
+       col = c("blue", "red"), lwd = 2)
+```
+The error metrics and REC curve together confirm that the interaction model (Model 2) delivers better predictive performance on the validation data. Across metrics, Model 2 achieves lower RMSE (8.67 vs 9.32), MAE/MAD (7.53 vs 8.15), and MAPE (10.62% vs 11.50%), reflecting smaller absolute and percentage errors—roughly a 7–8 % improvement in predictive accuracy.
+
+RMSE: 9.316 → 8.673 (−0.643, ~6.9% improvement)
+
+MAE/MAD: 8.145 → 7.527 (−0.618, ~7.6% improvement)
+
+MAPE: 11.497% → 10.616% (−0.881 pp, ~7.7% improvement)
+
+The REC curve visually supports this result: Model 2’s curve lies above Model 1’s across most error tolerances, meaning a larger share of predictions fall within tighter Health-score error bands. Both curves converge at high tolerances, but Model 2 consistently captures more accurate predictions at operationally relevant ranges.
+
+Based on the validation results, Model 2 peforms better. Model 2 achieved a higher Adjusted R² (0.8091 vs 0.8047) and lower RSE (7.47 vs 7.55), meaning that the addition of interaction terms captured extra variance in Health not explained by the main effects alone. Validation metrics  improved, all RMSE, MAE/MAD,and MAPE, improving also in predictive accuracy. Mr. Person’s organization can use Model 2’s insights to tailor marketing strategies: focusing on the education-based moderation of Social Connectedness to identify which audience segments derive the greatest health benefit from social engagement. 
+
+# DEPLOYMENT 
+
+The models confirm that Social Connectedness positively influences Health, with the strongest effects among college-educated individuals. Adding interactions in Model 2 slightly improves prediction accuracy and provides deeper behavioral insight into how different groups experience health benefits from social ties. \
+
+From a marketing standpoint, promoting Social Connectedness is not only meaningful but actionable. The organization can frame Social Connectedness as a health behavior with measurable benefits, rather than just an abstract concept. Some companies position their products to fulfill a need, this campaign can position “connection” as a practical way to improve life satisfaction and health metrics.
+
+The campaign strategy should be directly informed by the interaction effects identified in Model 2, where education (College) strengthens the impact of Social Connectedness on Health. This means messaging should be segmented and data-driven, reflecting how different groups respond to social engagement.
+
+For the college-educated group, where the data showed a strong and positive Social×College interaction, I would focus on messages that highlight personal growth and leadership through connection. People with higher education often respond well to ideas that tie social engagement to purpose and self-improvement. For those with no college degree or lower income, where the relationship between Social and Health is weaker but still positive, I’d make the message more accessible and community-based.low-cost highlighting that anyone can get involved.
+
+
+
+
+

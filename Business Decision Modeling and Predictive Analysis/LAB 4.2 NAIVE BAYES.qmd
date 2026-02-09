@@ -1,0 +1,472 @@
+---
+title: "DAT-4253 LM 4.2 -NB"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: false
+toc-location: left
+number-sections: false
+editor: source
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r, libraries, include=FALSE, echo=FALSE}
+library(DataExplorer)
+library(tidyverse)
+# classification -- NB, Naïve Bayes, Decision Trees
+library(caret)
+library(gains)
+library(pROC)
+library(klaR)
+```
+
+```{r, readfile}
+library(readxl)
+OnlineRetail <- read_excel("LAB_4.xlsx",sheet = "OnlineRetail")
+OnlineRetail %>% head(10)			# look at first 10 observations
+OnlineRetail %>% tail(10)
+```
+
+# BUSINESS UNDERSTANDING
+## Problem Narrative (from Jaggia, et al., 2023, p 458)
+
+" An online retailer is offering a new line of running shoes. The retailer plans to send out an e-mail with a discount offer to some of its existing customers and wants to know if it can use data mining analysis to predict whether or not a customer might respond to its e-mail offer. The retailer prepares the accompanying data file of 170 existing customers who had received online promotions in the past, which includes the following variables: Purchase (1 if purchase, 0 otherwise); Age (1 for 20 years and younger, 2 for 21 to 30 years, 3 for 31 to 40 years, 4 for 41 to 50 years, and 5 for 51 and older); Income (1 for $0 to $50K, 2 for $51K to $80K, 3 for $81K to $100K, 4 for $100K+); and PastPurchase (1 for no past purchase, 2 for 1 or 2 past purchases, 3 for 3 to 6 past purchases, 4 for 7 or more past purchases)."
+
+## Business Problem
+
+-The objective is to predict whether a customer will respond to the e-mail discount offer for the new running shoes.
+-A Naïve Bayes (NB) classification model will be used to build these predictions.
+-The dataset of 170 customers will be split, with 60% used for training and 40% used for testing.
+-Model performance will be measured with Misclassification Rate, Accuracy Rate, Sensitivity, Precision, and Specificity.
+-Additional evaluation will be done using Cumulative Lift, Decile-wise Lift, and the ROC Curve.
+-The final model will be applied to classify new customers as likely or not likely to respond to the promotion.
+
+# DATA UNDERSTANDING
+
+## EDA
+
+###Understanding
+```{r, understanding}
+OnlineRetail %>% str()     		# info about the dataframe and variables 
+OnlineRetail %>% glimpse()		# glimpse the dataset
+OnlineRetail %>% plot_intro()	# plots the output from the introduce() function as a visualization
+```
+-All columns are 100% complete, with **0% missing values**, meaning there are no gaps in the dataset
+
+-Overall, OnlineRetail is a well-structured and complete dataset, making it suitable for training a Naïve Bayes model to predict customer purchase behavior based on Age, Income, and PastPurchase.
+
+## Dimensions
+```{r, dimensions}
+summary(OnlineRetail)
+cat("OnlineRetail dimensions:"); dim(OnlineRetail)
+```
+- OnlineRetail has **170 rows** and **4 variables**: Purchase, Age, Income, and PastPurchase.  
+
+- Age ranges from **1 to 5**, with a **mean of 3.19** and a **median of 3**, suggesting most customers are in the middle age categories.  
+
+- Income ranges from **1 to 4**, with a **mean of 2.19** and a **median of 2**, indicating most customers fall in the lower to mid-income categories.  
+
+- PastPurchase ranges from **1 to 4**, with a **mean of 2.36** and a **median of 2**, showing that most customers had made **1 to 3 previous purchases**.
+
+# Transformations to cat for plot bar
+```{r, to_categorical}
+OnlineRetail$Age.c <- as.character(OnlineRetail$Age)
+OnlineRetail$Income.c <- as.character(OnlineRetail$Income) # use only for EDA we will delete it before modeling
+OnlineRetail$PastPurchase.c <- as.character(OnlineRetail$PastPurchase)
+
+OnlineRetail$Purchase <- as.factor(OnlineRetail$Purchase)  # need depvar as factor in NB modeling 
+```
+
+## Plot Bar
+```{r, plotbar}
+library(DataExplorer)
+plot_bar(OnlineRetail) # look at all of the categorical variables
+
+library(gmodels)
+CrossTable(OnlineRetail$Purchase, format="SPSS")  # calculate the depvar freq percent
+
+# DELETE the character transformation for Age that we used just for EDA
+##  We will use the original *ordinal* version for modeling
+OnlineRetail <- OnlineRetail %>% 
+	dplyr::select(-Age.c)  %>% 
+  dplyr::select(-Income.c)  %>% 
+  dplyr::select(-PastPurchase.c)
+
+```
+-Temporary variables (Age, Income, and PastPurchase) were transformed to character for EDA to practice converting them into categorical (nominal) versions, which were then used for plotting frequencies.
+-The Purchase variable was converted into a factor, ensuring it was correctly treated as a categorical dependent variable
+-The bar plot helps to visualize category distributions across variables
+
+### Histogram
+
+```{r, histogram}
+library(DataExplorer)
+plot_histogram(OnlineRetail)
+```
+
+###Distribution
+
+```{r, Purchasedistribution}
+library(dplyr)
+
+OnlineRetail %>%
+  count(Purchase) %>%
+  mutate(Percent = round(100 * n / sum(n), 1))
+
+library(ggplot2)
+ggplot(OnlineRetail, aes(x = factor(Purchase), fill = factor(Purchase))) +
+  geom_bar() +
+  scale_fill_manual(values = c("lightblue", "salmon"), labels = c("No", "Yes")) +
+  labs(x = "Purchase", y = "Count", title = "Promotion Distribution") +
+  theme_minimal()
+```
+
+-The graphs shows that out of 170 total observations, 75 were non-purchasers (44.1%) and 95 were purchasers (55.9%)indicating a slightly higher proportion of purchasers.
+-Purchases (1) occurred more often than non-purchases (0). 
+-For *Age.c*, category 2,3,4 was the most frequent with category 4 having the highest frequency.
+-For *Income.c*, categories 1 and 2 had the highest frequencies with category 1 being the highest. 
+-For *PastPurchase.c*, category 2 was much higher than others
+
+-The data suggests that customers are more likely to make a purchase than not. The typical customer in this dataset is likely in the older age group represented by category 4, has a lower income (categories 1 and 2), and has purchased before, category 2. 
+
+
+### Box Plot
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Ensure Purchase is a factor
+OnlineRetail <- OnlineRetail %>%
+mutate(Purchase = factor(Purchase, levels = c(0,1), labels = c("0", "1")))
+
+# Reshape to long format
+HR_long <- OnlineRetail %>%
+pivot_longer(cols = c(Age, Income, PastPurchase),
+names_to = "Variable",
+values_to = "Value")
+
+# Horizontal boxplots: Purchase on y, Value on x
+ggplot(HR_long, aes(x = Value, y = Purchase, fill = Purchase)) +
+geom_boxplot(alpha = 0.7) +
+facet_wrap(~Variable, scales = "free") +
+theme_minimal() +
+labs(title = "Predictor Distributions by Promotion Outcome",
+x = "Value", y = "Purchase") +
+scale_fill_manual(values = c("lightblue", "salmon"))
+
+```
+
+*Age:* Customers who purchased (1) tend to be in slightly higher age categories than non-purchasers (0). The interquartile ranges (IQRs) are similar, indicating comparable age variation across groups.
+
+*Income:* Both purchasers and non-purchasers have very similar distributions, with comparable medians and spread, suggesting income may not strongly influence purchase behavior.
+
+*PastPurchase:* Purchasers (1) have higher PastPurchase values and a higher median than non-purchasers (0).Two outliers appear in this variable for non-purchase customers.
+
+### Heatmap
+
+```{r, heatmap}
+cor(OnlineRetail[, c("Age","Income","PastPurchase")])
+OnlineRetail %>% plot_correlation()
+```
+-Age and Income have a very weak positive correlation **(0.05)**, meaning there is almost no linear relationship between a customer's age and their income level in this dataset.
+-Age and Past Purchase behavior show a weak positive correlation **(0.11)**, suggesting that slightly older customers may have marginally more past purchase activity, but the relationship is quite weak.
+-Income and Past Purchase behavior have a very weak negative correlation **(-0.04)**, indicating virtually no meaningful relationship between income level and past purchasing behavior
+ the effect is minimal.
+
+## ADDITIONAL EDA FROM EXAMPLE (Contingency)
+
+### Contingency tables for each predictor by Purchase
+
+NOTE: THIS IS NOT IN THE TEXTBOOK
+
+```{r, score tables}
+
+#OnlineRetail <- dplyr::rename(myScoreData, Purchase=nb_class_score)
+
+library(gmodels)
+CrossTable(OnlineRetail$Purchase, OnlineRetail$Age, format="SPSS", digits=2, chisq = FALSE)
+CrossTable(OnlineRetail$Purchase, OnlineRetail$Income,  format="SPSS", digits=2)
+CrossTable(OnlineRetail$Purchase, OnlineRetail$PastPurchase,   format="SPSS", digits=2)
+
+```
+-Older customers are more likely to purchase. Among purchasers, **Age 4 accounts for 40% and Age 3 for 27.37%**, while non-purchasers are concentrated in **Age 2 (29.33%) and Age 3 (28%)**. The purchase rates for older age groups are higher, with Age 4 at 69.09% and Age 5 at 63.16%, compared to younger ages.
+
+-Lower-income customers tend to purchase more. Among purchasers, **Income 1 represents 37.89% and Income 2 represents 28.42%**, while non-purchasers are mostly in **Income 2 (32%) and Income 1 (26.67%)**. Purchase rates are highest for **Income 1 at 64.29%** and **Income 2 at 52.94%**, showing that lower-income segments respond well to promotions.
+
+-Past purchase behavior strongly predicts current purchases. Non-purchasers are mostly in **PastPurchase 2 (66.67%)**, while purchasers are concentrated in **PastPurchase 2 (40%) and PastPurchase 3 (32.63%)**. Customers with higher past purchases have higher purchase rates: **PastPurchase 4 = 100%, PastPurchase 3 = 67.39%, and PastPurchase 2 = 43.18%**, making this the strongest predictor.
+
+
+### Row-percents
+```{r, rowpercent}
+OnlineRetail %>%
+  group_by(Purchase) %>%
+  summarise(
+    Age_mean = mean(Age),
+    Income_mean = mean(Income),
+    PastPurchase_mean = mean(PastPurchase)
+  )
+```
+
+### Row-percents for Age
+```{r}
+table(OnlineRetail$Purchase, OnlineRetail$Age) %>%
+  prop.table(margin=1)  # row percentages
+```
+The row percentages show how the age distribution differs between customers who purchased and those who did not. Among non-purchasers, the largest group falls in the **21–30 range (29.3%), followed by 31–40 (28.0%) and 41–50 (22.7%)**. By contrast, purchasers are most concentrated in the **41–50 group (40.0%)**, with smaller proportions in **31–40 (27.4%) and 51+ (12.6%)**. Very few purchasers are under **20 (3.2%)**. This suggests that middle-aged customers, particularly those between 41 and 50, are the most likely to respond positively to the promotion, while younger customers are the least likely.
+
+### Row-percents for Income
+```{r}
+table(OnlineRetail$Purchase, OnlineRetail$Income) %>%
+  prop.table(margin=1)  # row percentages
+```
+### Row-percents for PastPurchase
+```{r}
+table(OnlineRetail$Purchase, OnlineRetail$PastPurchase) %>%
+  prop.table(margin=1)  # row percentages
+```
+
+
+The OnlineRetail dataset shows that non-purchasers have a mean **Age of 2.91**, **Income of 2.33**, and **PastPurchase of 2.07**, while purchasers have a mean **Age of 3.42**, **Income of 2.08**, and **PastPurchase of 2.59**, indicating that purchasers tend to be slightly older and have higher past purchase activity.  
+
+Among non-purchasers (0), the largest age groups are **Age 2 (29.33%)** and **Age 3 (28%)**, whereas purchasers (1) are mainly in **Age 4 (40%)** and **Age 3 (27.37%)**, showing older customers are more likely to buy.  
+
+Non-purchasers are concentrated in **Income 2 (29.33%)** and **Income 3 (28%)**, while purchasers are more frequent in **Income 1 (16.84%)** and **Income 3 (27.37%)**, suggesting lower-income customers are slightly more responsive.  
+
+For PastPurchase, non-purchasers are mostly in **PastPurchase 2 (40%)**, whereas purchasers are higher in **PastPurchase 2 (40%)** and **PastPurchase 3 (32.63%)**, highlighting that past purchase behavior strongly predicts current purchases.  
+
+Overall, customers who are older (**Age 4 and 5**) and have higher past purchase activity (**PastPurchase 2 and 3**) are most likely to buy, making these variables key predictors for modeling purchase behavior.
+
+Overall, customers who are older (**Age 4 and 5**) and have higher past purchase activity (**PastPurchase 2 and 3**) are most likely to buy, which reinforces that these variables are strong predictors
+
+# Data Preparation
+
+## Data Partition
+
+#### Partition the data 60/40 Train/Test
+```{r, partition}
+set.seed(1)
+myIndex<- createDataPartition(OnlineRetail$Purchase, p=0.6, list=FALSE)
+trainSet <- OnlineRetail[myIndex,]
+testSet <- OnlineRetail[-myIndex,]
+```
+
+-The dataset OnlineRetail was split into training(60%) and testing sets(40%) to evaluate the Naïve Bayes model’s performance.The seed (set.seed(1)) was set to ensure that the partitioning is reproducible.
+
+# Modeling
+
+## Run a 10-fold Cross-Validation and Train the NB Model
+```{r, fit}
+myCtrl <- trainControl(method="cv", number=10)
+set.seed(1)
+nb_fit <- train(Purchase ~., data = trainSet, method = "nb", trControl = myCtrl)
+nb_fit
+```
+
+-Using **10-fold cross-validation**, the model tested `usekernel` as a setting. With `usekernel = FALSE`, it had **Accuracy = 54.91%** and **Kappa = 0.083**. With `usekernel = TRUE`, it improved slightly to **Accuracy = 56.24%** and **Kappa = 0.103**.  
+
+-The other settings (`fL = 0`, `adjust = 1`) stayed the same. The final model used **usekernel = TRUE**, which made predictions a little better.  
+
+-Overall, the model works as a starting point to predict purchases. Kernel smoothing helped slightly, but the low Kappa shows the model is not very strong yet, likely due to the small dataset.
+
+## Model Evaluation
+
+### Predict and show the confusion Matrix -- ASSUME A 50% Cutoff
+### Display and interpret the confusion Matrix
+```{r}
+nb_class_prob <- predict(nb_fit, newdata=testSet)
+confusionMatrix(nb_class_prob, testSet$Purchase, positive = '1')
+```
+
+The Naive Bayes model correctly predicted **34 Purchase customers** and **14 non-Purchase customers**, with **4 false negatives** and **16 false positives**.  
+
+- **Sensitivity is 89.5%**, showing the model is strong at identifying actual purchasers.  
+- **Specificity is 46.7%**, indicating the model is weaker at correctly identifying non-purchasers.  
+- **Precision (Positive Predictive Value) is 68.0%**, meaning just over two-thirds of customers flagged as likely purchasers actually purchased.  
+- **Negative Predictive Value is 77.8%**, so most customers predicted as non-purchasers were correctly classified.  
+- **Overall accuracy is 70.6%**, with a **misclassification rate of 29.4%**, representing customers for whom the model predicted the wrong purchase outcome.  
+- The **Kappa of 0.377** indicates a moderate level of agreement between predicted and actual classifications.  
+- **Balanced Accuracy is 68.1%**, reflecting the average of sensitivity and specificity and accounting for the slightly imbalanced classes.  
+
+Overall, the model performs reasonably well at identifying purchasers, but it is less effective at correctly predicting non-purchasers.
+
+
+## Model Performance Charts
+
+### GAINS TABLE
+
+```{r, gains chart}
+nb_class_prob <- predict(nb_fit, newdata = testSet, type = 'prob')
+testSet$Purchase <- as.numeric(as.character(testSet$Purchase))
+gains_table <- gains(testSet$Purchase, nb_class_prob[,2])
+gains_table
+```
+
+- In the top **15.8%** of the dataset (first 9 records), the model correctly identifies **6 of 6** cumulative purchasers, achieving a **mean response of 1.00** and a **cumulative lift of 179%**.  
+- In the top **34.2%** of records (22 records), the model captures **15 of 17** total purchasers, with a **cumulative response rate of 0.87** and a **cumulative lift of 155%**.  
+- At **50% depth** (50 records), the model identifies **34 of 68** cumulative purchasers, maintaining a **cumulative response rate of 0.71** and a **cumulative lift of 126%**.  
+- By **100% of the dataset**, the model captures **all 68 purchasers**, but the **cumulative lift drops to 100%**, as expected when including all observations.  
+- **Interpretation:** The model is most effective at identifying **top-purchase customers**, allowing marketing campaigns to focus on a smaller, high-potential group for maximum impact.
+
+
+### CUMULATIVE LIFT CHART
+
+```{r, lift chart}
+plot(c(0, gains_table$cume.pct.of.total*sum(testSet$Purchase)) ~ c(0, gains_table$cume.obs), xlab = '# of cases', ylab = "Cumulative", type = "l")
+lines(c(0, sum(testSet$Purchase))~c(0, dim(testSet)[1]), col="red", lty=2)
+```
+
+-The model demonstrates positive lift, as the solid line curves above the dashed baseline, indicating the model is successfully identifying customers more likely to purchase compared to random.
+
+### BARPLOT DECILE-WISE LIFT CHART
+
+```{r, decilewise}
+barplot(gains_table$mean.resp/mean(testSet$Purchase), names.arg=gains_table$depth, 
+        xlab="Percentile", ylab="Lift", ylim=c(0,1.5), col="turquoise", main="Decile-Wise Lift Chart")
+abline(h=c(1),col="grey")
+```
+-The top decile (9th percentile) and third decile (31st percentile)shows exceptional performance with lift > 1, meaning customers in this group are more than to purchase than the average customer.
+
+-The bottom three deciles (93rd, 79th, 100th percentiles) all show below-average performance with lift values between 0.5-0.6, indicating these customers are significantly less likely to purchase.
+
+#### ROC Curve with AUC
+
+```{r, ROC}
+roc_object <- roc(testSet$Purchase, nb_class_prob[,2])
+plot.roc(roc_object)
+auc(roc_object)
+```
+
+-The black curve shows the model's actual performance, demonstrating how well it discriminates between customers who will purchase versus those who won't.
+
+-The Area Under the Curve (AUC) value is **0.7719*, which represents good discriminatory power on a scale where 0.5 = random and 1.0 = perfect classification.
+
+-An AUC of 0.77 indicates the model has a **77.19% probability** of correctly ranking a randomly selected purchaser higher than a randomly selected non-purchaser.
+
+-The curve shows high **sensitivity** (correctly identifying purchasers) while maintaining reasonable **specificity** (not flagging too many non-purchasers).  
+
+
+## WHAT IF -- Sensitivity to the Cutoff
+
+NOTE: THIS IS NOT IN THE TEXTBOOK
+
+Change cutoff to 40%, that is, allowing more of the predictions to be classified as "in Purchase".\
+What is the implication on model accuracy, etc.?
+
+```{r}
+OnlineRetail$Purchase <- as.factor(OnlineRetail$Purchase)
+set.seed(1)
+myIndex<- createDataPartition(OnlineRetail$Purchase, p=0.6, list=FALSE)
+trainSet <- OnlineRetail[myIndex,]
+testSet <- OnlineRetail[-myIndex,]
+myCtrl <- trainControl(method="cv", number=10)
+set.seed(1)
+nb_fit <- train(Purchase ~., data = trainSet, method = "nb", trControl = myCtrl)
+nb_class_prob <- predict(nb_fit, newdata=testSet, type= 'prob')
+confusionMatrix(as.factor(ifelse(nb_class_prob[,2]>0.4, '1', '0')), testSet$Purchase, positive = '1')
+```
+- With this cutoff, the model achieved an accuracy of about 60% , which is moderate
+
+- While this is modest, the sensitivity reached 100%, meaning the model successfully identified every customer who actually purchased. However, specificity dropped to just 10%, indicating that almost all non-buyers were incorrectly predicted as buyers.
+
+- By lowering the cutoff from 0.5 to 0.4, the retailer classifies more customers as likely purchasers. For the retailer, this tradeoff can be valuable because missing a potential buyer is often more costly than mistakenly targeting a non-buyer. That means that in this context, the primary goal is to maximize the number of people who respond to the campaign.
+
+# Deployment
+
+If new customer data were available, the Naïve Bayes model could be applied to score each customer and estimate their likelihood of responding to the email promotion. Customers with a high predicted probability of purchase could be prioritized for targeted campaigns, allowing marketing resources to focus on the segments most likely to respond. The model also enables adjustment of the classification cutoff depending on business objectives, such as maximizing the number of purchasers by increasing sensitivity or reducing false positives by increasing specificity. Insights from the model could support personalized offers, including tailored discounts or promotions for high-potential customers. Aggregating predictions across different customer segments would help identify the most profitable groups and optimize overall marketing strategy. By deploying the model on additional customer data, the retailer can make data-driven decisions, improve campaign ROI, and increase overall customer engagement.
+
+# Analysis
+
+### 1. Business Understanding
+
+The retailer aims to predict which customers are likely to respond to an email promotion for a new line of running shoes. The objective is to use customer data, including Age, Income, and PastPurchase history, to identify segments with the highest likelihood of purchase. These insights will support targeted marketing campaigns and more efficient resource allocation.
+
+### 2. Data Understanding
+
+- The Naïve Bayes model relies more heavily on PastPurchase and Age than on Income when predicting purchase behavior, as these variables show clearer differentiation between purchasers and non-purchasers.
+
+- Weak correlations among predictors suggest that each variable provides largely independent information, allowing the Naïve Bayes model to identify patterns effectively.
+
+- Initial exploratory analysis indicated that older customers and those with higher past purchase activity are more likely to respond to promotions, while income shows only a moderate effect.
+
+### 3. Data Preparation
+
+- Purchase was converted to a factor, and Age, Income, and PastPurchase were briefly converted to categorical variables for visualization.
+
+- A **60/40 train/test** split was applied to ensure sufficient data for model training and evaluation.
+
+
+### 4. Modeling
+
+-The model was trained using 10-fold cross-validation, with kernel smoothing enabled (usekernel = TRUE) to improve predictive performance.
+
+-The model achieved an overall accuracy of **70.6%** and a Kappa of 0.377. Kernel smoothing slightly improved results compared to the default settings.
+
+-These results indicate that the model captures meaningful patterns in purchase behavior but is not perfect, likely due to the relatively small dataset.
+
+### 5. Evaluation
+
+#### Confusion Matrix & Metrics:
+
+-The model correctly identifies 34 purchasers and 14 non-purchasers, with 4 false negatives and 16 false positives.
+
+-Sensitivity **(89.5%)** demonstrates strong ability to detect actual purchasers.
+
+-Specificity **(46.7%)** is lower, showing the model is less effective at identifying non-purchasers.
+
+-Precision **(68%)** indicates that most customers predicted as likely purchasers do buy, while negative predictive value **(77.8%)** shows that most predicted non-purchasers are correctly identified.
+
+-Overall accuracy **(70.6%)** and misclassification rate **(29.4%)** suggest reasonable predictive performance, with moderate agreement **(Kappa = 0.377)**.
+
+#### Gains & Lift:
+- The top **15.8%** of customers identified by the model include all of the highest-value purchasers, achieving a cumulative lift of **179%**. This indicates that marketing efforts concentrated on this small group would efficiently reach the most responsive customers and maximize return on investment.  
+- By targeting **50%** of the customer base, the model captures **34 of 68** purchasers, maintaining a cumulative lift of **126%**, demonstrating that even broader campaigns still outperform random selection and effectively reach many actual buyers.  
+- Overall, the cumulative lift shows that the model ranks customers accurately by likelihood to purchase, allowing the retailer to prioritize high-potential segments and allocate marketing resources strategically.  
+
+
+#### **5.3 Cumulative and Decile-wise Lift**
+- The top deciles show the highest lift, confirming that the model effectively identifies customers who are most likely to respond. Targeting these deciles yields the strongest results for promotional campaigns.  
+- Lift declines progressively across lower deciles, indicating diminishing returns when extending the campaign to less-promising segments.  
+- These results highlight the importance of focusing on high-ranked deciles for efficient marketing, while lower-ranked deciles may require alternative strategies or lower investment.  
+
+#### ROC & AUC:
+
+- The ROC curve indicates good discrimination between purchasers and non-purchasers.
+- The AUC of **0.7719** suggests that there is a 77% chance that a randomly selected purchaser will have a higher predicted probability than a randomly selected non-purchaser, reflecting strong overall performance.
+
+## Insights
+- The model successfully identifies the most valuable customers, with the top **15.8%** showing a purchase likelihood approximately **79% higher** than the overall average.  
+
+- Past purchase behavior emerges as the strongest predictor, highlighting that customer loyalty has greater influence on running shoe purchases than demographic factors such as income.  
+- Age plays a notable role in purchase behavior, with older customers exhibiting distinct buying patterns, potentially driven by brand loyalty or established exercise habits.  
+
+- Income demonstrates limited predictive power, indicating that higher-income customers are not automatically the best targets for promotional campaigns.  
+
+- The model shows high sensitivity (**89.5%**) but lower specificity (**46.7%**), meaning it effectively captures potential purchasers but may generate false positives, potentially increasing marketing costs.  
+
+# Recommendations
+- Develop threshold optimization techniques to balance sensitivity and specificity based on business costs, allowing the retailer to adjust the classification cutoff point depending on campaign budget constraints and desired precision levels.
+- Target the top 15-20% of customers identified by the model to maximize campaign ROI, as these customers show 79% higher purchase likelihood and represent the most efficient use of marketing budget.
+- Target the top 15-20% of customers identified by the model to maximize campaign ROI, as these customers show 79% higher purchase likelihood and represent the most efficient use of marketing budget.
+- Create automated email triggers for customers moving between past purchase categories, capitalizing on changing customer behavior patterns identified by the model.
+- Invest in data collection for past purchase behavior tracking since this proves to be the most valuable predictor, improving customer history databases and purchase tracking systems.
+
+# References
+
+ChatGPT (GPT-5 Mini) was used in the generation of this code. Version: GPT-5 Mini, Date: 2025-09-21
+
+Jaggia, S., Kelly, A., Lertwachara, K., & Chen, L. (2023). *Business analytics: Communicating with numbers* (2nd Ed.). McGraw-Hill.
+
+

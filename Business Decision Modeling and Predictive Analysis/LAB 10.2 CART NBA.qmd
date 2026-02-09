@@ -1,0 +1,429 @@
+---
+title: "LAB 10.2-CART and Random Forest- NBA"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(car)       #for the VIF
+library(Metrics)   # for regression evaluation like RMSE
+library(summarytools)
+library(dlookr)     #diagnose_outlier
+library(formattable)
+library(questionr)
+library(caret)
+library(psych)
+```
+
+```{r}
+library(readxl)
+mydata <- read_excel("LAB_10.xlsx", sheet = "NBA_Data")
+head(mydata)
+
+myScoreData <- read_excel("LAB_10.xlsx", sheet = "NBA_Score")
+head(myScoreData)
+```
+
+
+## BUSINESS UNDERSTANDING
+
+Merrick Stevens, a sports analyst at ACE Sports Management, is interested in understanding how an NBA player’s physical attributes and performance statistics relate to their salary. The agency represents over 200 athletes, and accurately estimating player salaries can help guide contract negotiations and identify valuable prospects.
+
+## DATA UNDERSTANDING  
+
+### Skinny EDA
+
+```{r}
+length(which(is.na(mydata))) # find missing values
+colSums(is.na(mydata))
+
+library(psych)
+psych::describe(mydata, fast = TRUE)
+
+library(DataExplorer)
+plot_histogram(mydata)
+plot_scatterplot(mydata, by = "salary")  # use the depvar as the by-variable
+
+library(dlookr)
+dlookr::diagnose_outlier(mydata) 
+dlookr::diagnose_outlier(myScoreData) 
+```
+Salary is highly right-skewed with a few players earning extremely high amounts (mean = $4.84 M, median = $2.84 M, max = $25 M), indicating strong income inequality among players.\
+
+Age is fairly normal (mean = 26.85 years), showing most players are in their mid-20s, with a few older veterans around 40.\
+
+Height (mean = 79.21 in) and weight (mean = 221.69 lbs) are approximately symmetric, suggesting a typical build for NBA athletes.\
+
+Games played (mean = 369.57) and games started (mean = 212.14) are right-skewed, showing that many players have limited career experience while a few have very long careers.\
+
+Minutes per game (mean = 21.88) is more balanced, centering around average playing time for rotation players.\
+
+Shooting metrics (FG made, FG attempted) are slightly right-skewed, while accuracy stats (FG%, FT%, 3P%) are tightly clustered around league norms (≈ 0.45 FG%, 0.75 FT%).\
+
+Outlier analysis found notable extremes in salary (35 outliers ≈ 7.9%), games started (20 outliers ≈ 4.5%), and games played (8 outliers ≈ 1.8%), which increase the mean relative to the median.\
+
+## DATA PREPARATION   
+
+Based on data understanding, little data preparation is required.\
+
+```{r}
+library(dplyr)
+
+mydata <- mydata %>%               
+  rename_with(make.names) %>%  
+  select(-player_number)
+
+myScoreData <- myScoreData %>%     
+  rename_with(make.names)
+
+head(mydata)        
+head(myScoreData)
+
+```       
+
+
+
+### PARTITION     
+
+Partition the dataset 70% Training / 30% Validation and compare descriptives across all three.\
+
+```{r}
+set.seed(1)
+myIndex <- createDataPartition(mydata$salary, p=0.7, list=FALSE)
+trainSet <- mydata[myIndex,]
+validationSet <- mydata[-myIndex,]
+
+cat("Mean of Depvar Train", scales::dollar(mean(trainSet$salary), accuracy = 1),"\n")
+cat("Mean of Depvar Validation", scales::dollar(mean(validationSet$salary), accuracy = 1),"\n")
+```
+
+## MODEL DEVELOPMENT     
+
+Set the control for 10-fold cross validation, which we will need for the best tree. \
+```{r}
+myCtrl <- trainControl(method="cv", number=10) 
+```
+
+
+### "Full Tree" Demonstration Only
+
+```{r}
+full_tree_like <- train(salary ~ ., 
+												data = trainSet,
+												method = "rpart",
+												trControl = trainControl(method = "none"),  # no CV, just fit once
+												tuneGrid   = data.frame(cp = 0),
+												control    = rpart::rpart.control(cp = 0, minsplit = 2, minbucket = 1, maxdepth = 30))
+```
+
+#### CP Table
+```{r}
+set.seed(1)
+head(full_tree_like$finalModel$cptable,6)
+tail(full_tree_like$finalModel$cptable,6)
+```
+The CP (complexity parameter) table shows how tree complexity affects model performance. As CP decreases, the tree adds more splits (nsplit) and reduces training relative error, meaning the model fits the training data more closely. At higher CP values (e.g., 0.37 → 0.11 → 0.05), the tree captures major patterns and achieves substantial error reduction. However, once CP drops below ≈ 0.03, the gains in accuracy become minimal while the number of splits increases sharply (up to 281 splits at near-zero CP). This pattern indicates overfitting — the model is learning noise rather than meaningful structure.
+
+#### Variable Importance
+```{r}
+print(caret::varImp(full_tree_like))
+```
+The full regression tree places the strongest importance on career activity and role, with games played (100.00) and games started (88.26) emerging as the top predictors of salary. These are followed by physical attributes such as weight (88.11) and height (80.03), indicating that larger, more physically dominant players tend to command higher pay. Three-point percentage (15.62) has the smallest effect, suggesting that while shooting skill adds value, it is less critical.
+
+#### Tree Diagrams
+```{R}
+library(rpart.plot)
+prp(full_tree_like$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+```
+
+
+
+### BEST TREE
+```{r}
+set.seed(1)
+best_tree <- train(salary ~ .,
+ 									 data = trainSet,
+ 									 method = "rpart",
+ 									 trControl = myCtrl,
+ 									 tuneLength = 25,  # number of cps to try
+ 									 metric = "RMSE",  # RMSE is actually the default (could use rather MAE or Rsquared)
+ 									 control = rpart::rpart.control(minsplit = 2, minbucket = 1, cp = 0))  # no starting limits
+
+# Check here when you get that warning. If all folds are fine (none missing), you can ignore the warning
+best_tree$resample 
+```
+Performance varies a lot across folds: best cases like Fold02 and Fold08 show low RMSE (~$1.9–2.8M) with high R² (~0.70–0.80), indicating the tree can fit some subsets very well. Weaker cases like Fold01 and Fold10 have much higher RMSE (~$4.9M) and low R² (~0.22), showing sensitivity to which players land in each fold—likely driven by salary outliers and uneven role distributions.
+
+#### Results 
+Show all cpvalues caret tried and which one was chosen.\
+```{r}
+set.seed(1)
+best_tree$results
+cat("\nBest Tuned cp value Chosen:", best_tree$bestTune$cp, "\n")
+```
+The final cp = 0.03046 was chosen using the 1-SE rule, which keeps the tree simpler and easier to interpret while still maintaining good accuracy. This value helps the model avoid overfitting and ensures it performs well on new data.
+  
+#### Variable Importance
+```{r}
+print(caret::varImp(best_tree))
+```
+Points (100.00) – strongest predictor; higher scorers earn higher salaries.\
+
+FG Made (77.36) – consistent shooting success strongly drives pay.\
+
+Minutes per Game (61.03) – players trusted with more playtime earn more.\
+
+FT Attempted (54.42) – reflects offensive involvement and aggressiveness.\
+
+Games Started (51.09) – regular starters have higher predicted salaries.\
+
+Games Played (48.88) – experience contributes to earnings.\
+
+FT Made (44.12) – efficiency at the line adds value.\
+
+FG Attempted (42.45) – offensive volume is rewarded.\
+
+Age (38.11) – older, more experienced players earn slightly more up to their peak years.\
+
+Steals (31.60) – defensive impact has a smaller but positive effect on salary.\
+
+Overall, the model emphasizes that players who score more, play more minutes, and maintain a central role on the court are rewarded the most in salary outcomes.
+
+##### Best Model Output
+```{r}
+best_tree$finalModel # as narrative
+prp(best_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)  # as tree
+```
+The tree shows that games started is the main factor separating low and high salaries. Players with fewer than 151 starts earn around $2.1M, while consistent starters earn much more. Among starters, minutes per game and points are key—those playing over 31 minutes or scoring more than 11.5 points reach salaries above $10M. Age also matters, as older players earn less on average, and players with high free throw attempts (≥6.4) can earn up to $20M, reflecting star-level performance.
+
+### RANDOM FOREST
+#### Data prep to create the tuneGrid with number of predictors to try
+```{r}
+library(randomForest)
+# count number of predictors in the model (use diff code if not using all df cols as predictors)
+p <- ncol(trainSet) - 1  
+
+# Use this this for the tuneGrid if you have many variables and you want to select the center and the extremes (see slide deck)
+mtry_center <- max(1, round(p/3))
+mtry_grid <- data.frame(mtry = sort(unique(pmax(1, c(mtry_center-1, mtry_center, mtry_center+1, 2, p)))))
+
+set.seed(1)
+rf_model <- train(salary ~ .,
+										 data = trainSet,
+										 method = "rf",
+										 trControl = myCtrl,
+									   tuneGrid = mtry_grid,
+									   ntree = 1000, 
+									   importance = TRUE)
+```
+
+
+#### Resampling results
+```{r}
+rf_model  # output
+```
+The model achieved its lowest RMSE of 3,291,909 and highest R² of 0.56 when mtry = 8, meaning the model performed best when using eight predictors per split. This balance allowed the forest to capture complex relationships between player characteristics and salary while minimizing overfitting. The relatively small differences in RMSE across nearby mtry values (7–9) show that the model is stable and generalizes well. Overall, the Random Forest explains about 56% of the variation in NBA player salaries, demonstrating that a player’s salary can be reasonably predicted from their performance and physical attributes, though other external factors (such as endorsements or team budget) likely account for the remaining unexplained variance.
+
+
+#### Variable Importance
+```{R}
+varImp(rf_model)
+```
+
+- The variable importance results indicate that the Random Forest model relies most heavily on games_started (100.00) and games_played (94.03), confirming that career experience and starting frequency are the strongest predictors of salary. Age (83.58) and minutes_per_game (74.00) also contribute substantially.\
+
+- Mid-level importance is observed for steals (39.53), points (37.35), and FG_made (37.16), reflecting that on-court productivity and defensive capability add meaningful predictive power. 
+
+- Lower but still relevant predictors include offensive_rebounds (30.82), turnovers (28.05), and FG_percent (24.00), suggesting that while efficiency and possession metrics influence salary, they are secondary to overall role and visibility.\
+
+- In analytical terms, the model’s feature importance distribution highlights that high-usage, experienced players with strong offensive and defensive outputs have the highest marginal impact on predicted salary.\
+
+#### Output
+Partial effects of the predictors.\
+```{r}
+library(pdp)
+library(ggplot2)
+library(gridExtra)
+
+
+train_x <- subset(trainSet, select = -salary)
+
+
+pd_games_started <- partial(
+  object = rf_model,
+  pred.var = "games_started",
+  train = train_x,
+  grid.resolution = 50
+)
+
+p1 <- autoplot(pd_games_started) + 
+  theme_minimal() 
+
+
+
+pd_games_played <- partial(
+  object = rf_model,
+  pred.var = "games_played",
+  train = train_x,
+  grid.resolution = 50
+)
+
+p2 <- autoplot(pd_games_played) + 
+  theme_minimal() 
+
+
+pd_age <- partial(
+  object = rf_model,
+  pred.var = "age",
+  train = train_x,
+  grid.resolution = 50
+)
+
+p3 <- autoplot(pd_age) + 
+  theme_minimal() 
+
+
+pd_minutes <- partial(
+  object = rf_model,
+  pred.var = "minutes_per_game",
+  train = train_x,
+  grid.resolution = 50
+)
+
+p4 <- autoplot(pd_minutes) + 
+  theme_minimal() 
+
+
+pd_steals <- partial(
+  object = rf_model,
+  pred.var = "steals",
+  train = train_x,
+  grid.resolution = 50
+)
+
+p5 <- autoplot(pd_steals) + 
+  theme_minimal() 
+
+pd_points <- partial(
+  object = rf_model,
+  pred.var = "points",
+  train = train_x,
+  grid.resolution = 50
+)
+
+p6 <- autoplot(pd_points) + 
+  theme_minimal() 
+
+
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 3,
+             top = "Partial Dependence Plots of Predicted Salary")
+
+
+```
+Games Started: Salary increases sharply up to around 300–400 games started, then levels off\
+
+Games Played: Predicted salary rises until about 500–800 games, then slightly declines, showing that experience helps early in a career but excessive years may not continue to raise earnings.\
+
+Age: Salaries peak around 27–30 years old and decline afterward\
+
+Minutes per Game: Salary grows steadily with more playing time, showing that consistent high-minute players earn the most\
+
+Steals: Players who average around 1.0–2.0 steals per game see higher predicted salaries, indicating that defensive contribution and agility are valued attributes.\
+
+Points: Salary rises continuously with points per game. Scoring ability remains one of the strongest predictors of player compensation.\
+
+## MODEL EVALUATION
+
+### Best Tree
+
+Use the Best Tree to predict onto the Validation Dataset. Display standard performance metrics.\
+```{r}
+predicted_value_tree <- predict(best_tree, validationSet)  
+validation_metrics_tree <- round(forecast::accuracy(predicted_value_tree, validationSet$salary),2)
+rownames(validation_metrics_tree) <- "ValidationSet CART"  # Change row name (it defaults to "test set")
+```   
+
+### Random Forest
+
+```{r}
+predicted_value_rf <- predict(rf_model, validationSet)  
+validation_metrics_rf <- round(forecast::accuracy(predicted_value_rf, validationSet$salary),2)
+rownames(validation_metrics_rf) <- "ValidationSet RF"  # Change row name (it defaults to "test set")
+``` 
+
+
+### Compare Performance of Best Tree with Random Forest in Validation
+```{r}
+knitr::kable(rbind(validation_metrics_tree, validation_metrics_rf))
+```
+When comparing model performance on the validation set, the Random Forest clearly outperformed the best-pruned regression tree across all key metrics. The Random Forest achieved an RMSE of 3.28 million and an MAE of 2.23 million, compared to the tree’s 4.16 million RMSE and 2.81 million MAE, representing roughly a 21% improvement in predictive accuracy. The mean error (ME) was also smaller for the Random Forest (−74,325 vs. −191,489), indicating that its predictions were less biased and closer to the true salaries.\
+
+Although the CART model is easier to interpret and visualize, the Random Forest provides more stable, accurate, and generalizable predictions. Therefore, it should be selected as the final model for deployment.
+
+
+## DEPLOYMENT
+
+```{r}
+
+predicted_new_rf <- predict(rf_model, myScoreData)
+pip_rf <- cbind(myScoreData, RF_Pred = predicted_new_rf)
+knitr::kable(pip_rf)
+             caption = ("Predicted salary for 20 New Prospects (Random Forest Model)")
+
+```
+The Random Forest was selected as the final model because it gave the most accurate and consistent predictions.Predicted salaries for the three new players were:\
+
+- Player 1: $8,889,093
+
+- Player 2: $6,692,129
+
+- Player 3: $10,683,421
+
+- Average predicted salary: $8,754,881\
+
+Player 3 (age 27) received the highest predicted salary since he is in his prime performance years and plays heavy minutes with strong scoring stats.\
+
+Player 1 (age 36) still earns a high predicted salary due to his experience and high number of starts, but his age limits further value growth.\
+
+Player 2 (age 32) has fewer games started and slightly lower performance, leading to a lower salary prediction.\
+
+Overall, the model shows that younger players in their late 20s, who start more games, play more minutes, and score more points, tend to have higher predicted salaries.\
+
+### Insights 
+- The model results show that the Random Forest performed better than the regression tree, with lower RMSE (3.28M vs 4.16M) and MAE (2.23M vs 2.81M), meaning it made more accurate and consistent predictions.\
+- The Random Forest explained about 56 percent of the variation in player salaries, showing it captures strong patterns between performance, experience, and pay.\  
+- Players who start more games, play more minutes, and score more points tend to earn the highest salaries, showing that consistent performance and visibility increase a player’s market value.\
+- Experience strongly impacts salary, but after around 300–400 games, salary growth slows down, similar to how a product’s value levels off after maturity in marketing.\
+- Players in their prime years (ages 27–30) have the highest earning potential, combining strong performance and reliability. \
+- Offensive stats such as points and free throws have a greater impact on salary than defensive stats like steals, showing that the market rewards measurable scoring results.\
+
+### Recommendations
+
+- Focus recruitment and negotiation efforts on younger players in their prime years (ages 27–30) who play more minutes and score consistently, as the model shows these traits lead to higher salary potential.  
+
+- The model can help ACE Sports Management identify undervalued players who perform above their current salary level to spot high-potential market segments. This allows the agency to position these players as “hidden value assets” and promote them more effectively to teams.  
+
+- For older players, the model’s predictions show a decline in salary after age 30, suggesting that their value should be marketed through leadership qualities and fan engagement  since the model indicates that on-court salary potential tends to decline with age.  
+
+- Regularly retrain and update the model with new season data to ensure salary predictions stay aligned with current market trends and player performance changes.  
+
+
+
+
+
+

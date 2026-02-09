@@ -1,0 +1,346 @@
+---
+title: "Lab 10.1 CART and Random Forest- TRAVEL"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(car)       #for the VIF
+library(Metrics)   # for regression evaluation like RMSE
+library(summarytools)
+library(dlookr)     #diagnose_outlier
+library(formattable)
+library(questionr)
+library(caret)
+library(psych)
+```
+
+```{r}
+library(readxl)
+mydata <- read_excel("LAB_10.xlsx", sheet = "Travel_Data")
+head(mydata)
+
+myScoreData <- read_excel("jaggia_ba_2e_ch13_data.xlsx", sheet = "Travel_Score")
+head(myScoreData)
+```
+
+
+## BUSINESS UNDERSTANDING
+Jerry Stevenson, the manager of a travel agency, wants to better understand what factors influence how much customers spend annually on travel products. By identifying the most important predictors of travel spending, the agency can target marketing campaigns more effectively, personalize offers, and allocate resources toward customers with higher spending potential. The goal of this analysis is to build a regression tree model that predicts annual household travel spending (TravelSpend) based on key demographic and financial variables such as education level (College), credit card status (CreditCard), annual food spending (FoodSpend), and household income (Income). The regression tree approach is particularly useful because it produces an interpretable set of rules—allowing management to see how spending patterns vary across different income or lifestyle segments. Accurate predictions will enable the agency to develop data-driven strategies to increase customer retention and optimize promotional efforts.
+
+
+## DATA UNDERSTANDING  
+
+### Skinny EDA
+
+```{r}
+length(which(is.na(mydata))) # find missing values
+colSums(is.na(mydata))
+
+library(psych)
+psych::describe(mydata, fast = TRUE)
+
+library(DataExplorer)
+plot_bar(mydata)
+plot_histogram(mydata)
+plot_scatterplot(mydata, by = "TravelSpend")  # use the depvar as the by-variable
+
+library(dlookr)
+dlookr::diagnose_outlier(mydata) 
+dlookr::diagnose_outlier(myScoreData) 
+```
+**Missing Values**
+
+No missing values were identified in the dataset. Every observation contained valid entries for all five variables—College, CreditCard, FoodSpend, Income, and TravelSpend—indicating that the dataset is clean and ready for analysis. \
+
+**Summary Statistics**
+
+The descriptive statistics show that FoodSpend has an average of approximately $4,420 with a standard deviation of about $1,741, suggesting moderate variability among customers. Its median value of $4,174 and a skewness of 0.83 indicate a right-skewed distribution, meaning a small number of customers spend substantially more on food than the majority.
+Income averages around $55,416 with a standard deviation of $7,248, and a nearly symmetric distribution (skew 0.16) ranging from $29,200 to $77,626. This implies that while incomes vary, they cluster around the mid-$50,000 range.
+The target variable, TravelSpend, has a mean of $2,402 and a median of $2,178, also slightly right-skewed (0.62) with values spanning $637 to $6,030. This suggests that most customers spend a moderate amount on travel each year, but a few spend considerably more. The College and CreditCard variables are categorical, so their numeric summary statistics appear as NaN, confirming they should be treated as factors in the analysis.\
+
+**Distributions**
+
+- Most customers in the dataset do not have a college degree and do not have a credit card. This imbalance means that the regression tree may only use these variables as secondary splits\
+
+- The histograms show that FoodSpend and TravelSpend are both right-skewed, with most households spending  modest amounts and a few exhibiting very high spending. Income, on the other hand, is roughly symmetric but displays visible clusters.These distribution patterns suggest natural groupings in the data that a regression tree model can effectively capture.\
+
+**Scatterplots with TravelSpend**
+
+The scatterplots mostly show a positive relationship between Income and TravelSpend, meaning higher-income customers tend to spend more on travel. A similar but slightly weaker positive association appears between FoodSpend and TravelSpend, indicating that households with greater overall spending capacity tend to invest more in leisure and travel. In contrast, College and CreditCard do not display clear separations or patterns, suggesting they may not strongly predict travel spending on their own but could interact with income or food spending levels within the tree structure.
+
+**Outliers**
+
+FoodSpend contains 12 outliers (2.4%), with an average outlier value of about $9,516, only slightly influencing the overall mean. Income has 7 outliers (1.4%), averaging $70,708, and TravelSpend has 5 outliers (1.0%), averaging $5,679. Removing these points would have minimal effect on the mean of each variable. Because regression trees are robust to outliers, these cases can remain in the dataset .\
+
+In the scores data no outliers were detected for FoodSpend or Income, and all values fall within the observed ranges of the training data. This ensures that predictions for new cases will be reliable and not extrapolated beyond the scope of the original dataset.
+
+## DATA PREPARATION   
+
+Based on data understanding, little data preparation is required.\
+
+Convert College variable to a factor.\
+```{r}
+mydata$CreditCard <- as.factor(mydata$CreditCard)
+myScoreData$CreditCard <- as.factor(myScoreData$CreditCard)
+
+mydata$College <- as.factor(mydata$College)
+myScoreData$College <- as.factor(myScoreData$College)
+```       
+
+The dataset contained no missing values or structural inconsistencies so data is appropriate  for analysis. Since both College and CreditCard are categorical variables representing “Yes” or “No” responses, we converted them to factors to ensure that they are not interpreted as numeric values.
+
+### PARTITION     
+
+Partition the dataset 70% Training / 30% Validation and compare descriptives across all three.\
+
+```{r}
+set.seed(1)
+myIndex <- createDataPartition(mydata$TravelSpend, p=0.7, list=FALSE)
+trainSet <- mydata[myIndex,]
+validationSet <- mydata[-myIndex,]
+
+cat("Mean of Depvar Train", scales::dollar(mean(trainSet$TravelSpend), accuracy = 1),"\n")
+cat("Mean of Depvar Validation", scales::dollar(mean(validationSet$TravelSpend), accuracy = 1),"\n")
+```
+-The dataset was randomly split 70%/30% into training and validation.
+
+The mean shows  that the two subsets are well balanced with respect to the outcome supporting a fair assessment of out-of-sample performance in the modeling stage.\
+
+## MODEL DEVELOPMENT     
+
+Set the control for 10-fold cross validation, which we will need for the best tree. \
+```{r}
+myCtrl <- trainControl(method="cv", number=10) 
+```
+
+
+### "Full Tree" Demonstration Only
+
+```{r}
+full_tree_like <- train(TravelSpend ~ ., 
+												data = trainSet,
+												method = "rpart",
+												trControl = trainControl(method = "none"),  # no CV, just fit once
+												tuneGrid   = data.frame(cp = 0),
+												control    = rpart::rpart.control(cp = 0, minsplit = 2, minbucket = 1, maxdepth = 30))
+```
+
+#### CP Table
+```{r}
+head(full_tree_like$finalModel$cptable,6)
+tail(full_tree_like$finalModel$cptable,6)
+```
+
+#### Variable Importance
+```{r}
+print(caret::varImp(full_tree_like))
+```
+
+#### Tree Diagrams
+```{R}
+library(rpart.plot)
+prp(full_tree_like$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+```
+- The  full-grown tree keeps splitting until training error is essentially zero, which is classic overfitting and exactly why we won’t use this model for inference. 
+
+- According to the variable importance results, FoodSpend is the most influential predictor (importance = 100), followed by Income (63.4). The College variable has a smaller effect (10.7), and CreditCard does not contribute meaningfully to the model. In later steps, the model will be pruned using cross-validation to find a simpler version that predicts new data more accurately.
+
+
+### BEST TREE
+```{r}
+best_tree <- train(TravelSpend ~ .,
+ 									 data = trainSet,
+ 									 method = "rpart",
+ 									 trControl = myCtrl,
+ 									 tuneLength = 25,  # number of cps to try
+ 									 metric = "RMSE",  # RMSE is actually the default (could use rather MAE or Rsquared)
+ 									 control = rpart::rpart.control(minsplit = 2, minbucket = 1, cp = 0))  # no starting limits
+
+# Check here when you get that warning. If all folds are fine (none missing), you can ignore the warning
+best_tree$resample 
+```
+
+#### Results 
+Show all cpvalues caret tried and which one was chosen.\
+```{r}
+best_tree$results
+cat("\nBest Tuned cp value Chosen:", best_tree$bestTune$cp, "\n")
+```
+
+The 10-fold cross-validation results show that the regression tree performs consistently well across different folds, though with some variation. The average RMSE is about $890, meaning the model’s typical prediction error is around $900 from the actual travel spending values. The MAE is around $715, showing that on average, predictions are off by about $700 in either direction. The R² values range from 0.27 to 0.51, which means the model explains roughly 30% to 50% of the variation in travel spending among customers.
+Overall, these results indicate that the tree model captures moderate predictive power—it identifies meaningful relationships between spending and predictors like Income and FoodSpend, but still leaves room for unexplained variability. The consistency across folds suggests the model is stable and gdoes not do overfitting.
+  
+#### Variable Importance
+```{r}
+print(caret::varImp(best_tree))
+```
+In the best-pruned tree, CreditCard (Yes) is the dominant predictor (importance = 100), followed by College (Yes) with moderate influence (~66). Income contributes weakly (~11), and FoodSpend shows 0 importance, meaning it was not used in any split of the final pruned model. This tells us the pruned model segments customers primarily by credit card status and then college status, with income playing a minor role and food spending didn’t add unique predictive value once other variables were considered.
+
+##### Best Model Output
+```{r}
+best_tree$finalModel # as narrative
+prp(best_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)  # as tree
+```
+The best-pruned regression tree contains three leaf nodes and uses CreditCard as the root variable. Customers who have a credit card are predicted to spend the least on travel, with an average TravelSpend of about $1,481. For those without a credit card, the next important factor is college education. Among non-cardholders, customers with a college degree are expected to spend around $2,172 while those without a college degree show the highest spending with $3,050. Overall, the model suggests that customers without credit cards—especially those without college degrees—tend to spend more on travel products.
+
+### RANDOM FOREST
+#### Data prep to create the tuneGrid with number of predictors to try
+```{r}
+library(randomForest)
+# count number of predictors in the model (use diff code if not using all df cols as predictors)
+p <- ncol(trainSet) - 1  
+
+# Use this this for the tuneGrid if you have many variables and you want to select the center and the extremes (see slide deck)
+mtry_center <- max(1, round(p/3))
+mtry_grid <- data.frame(mtry = sort(unique(pmax(1, c(mtry_center-1, mtry_center, mtry_center+1, 2, p)))))
+
+set.seed(1)
+rf_model <- train(TravelSpend ~ .,
+										 data = trainSet,
+										 method = "rf",
+										 trControl = myCtrl,
+									   tuneGrid = mtry_grid,
+									   ntree = 1000, 
+									   importance = TRUE)
+```
+#### Resampling results
+```{r}
+rf_model  # output
+```
+The tuning process tested different values of mtry, which were the number of predictors considered at each split and found that the best performance occurred at mtry = 2, which produced the lowest RMSE.
+
+
+#### Variable Importance
+```{R}
+varImp(rf_model)
+```
+The variable importance results show that CreditCard is the most influential factor (importance = 100), followed by College with a moderate contribution (~33). FoodSpend shows a small amount of predictive value (~3.6), while Income contributes almost none (~0). This means the model mainly depends on whether a customer has a credit card and college education to predict travel spending, while food spending offers minor refinement and income does not improve predictions.
+
+#### Output
+Partial effects of the predictors.\
+```{r}
+library(pdp)
+library(gridExtra)
+library(ggplot2)
+
+train_x <- subset(trainSet, select = -TravelSpend) 
+
+### PDP: CreditCard
+pd_creditcard <- partial(
+  object = rf_model,
+  pred.var = "CreditCard",
+  train = train_x,
+  grid.resolution = 50
+)
+p1 <- autoplot(pd_creditcard) + 
+  theme_minimal() 
+
+pd_college <- partial(
+  object = rf_model,
+  pred.var = "College",
+  train = train_x,
+  grid.resolution = 50
+)
+p2 <- autoplot(pd_college) + 
+  theme_minimal()
+
+### PDP: FoodSpend
+pd_food <- partial(
+  object = rf_model,
+  pred.var = "FoodSpend",
+  train = train_x,
+  grid.resolution = 50
+)
+p3 <- autoplot(pd_food) + 
+  theme_minimal() 
+
+p1
+p2
+p3
+
+
+```
+
+The partial dependence plots illustrate how each predictor affects the predicted TravelSpend, holding all other variables constant.
+
+**CreditCard:** Customers without a credit card are predicted to spend more on travel than those with one.
+
+**College:** Customers without a college degree tend to have slightly higher predicted travel spending than those with a degree.
+
+**FoodSpend:** The relationship is nonlinear, with spending fluctuating at higher food expenditure levels. This suggests that after accounting for other variables, additional food spending has a weak and inconsistent effect on predicted travel spending.
+
+
+## MODEL EVALUATION
+
+### Best Tree
+
+Use the Best Tree to predict onto the Validation Dataset. Display standard performance metrics.\
+```{r}
+predicted_value_tree <- predict(best_tree, validationSet)  
+validation_metrics_tree <- round(forecast::accuracy(predicted_value_tree, validationSet$TravelSpend),2)
+rownames(validation_metrics_tree) <- "ValidationSet CART"  # Change row name (it defaults to "test set")
+```   
+
+### Random Forest
+
+```{r}
+predicted_value_rf <- predict(rf_model, validationSet)  
+validation_metrics_rf <- round(forecast::accuracy(predicted_value_rf, validationSet$TravelSpend),2)
+rownames(validation_metrics_rf) <- "ValidationSet RF"  # Change row name (it defaults to "test set")
+``` 
+
+
+### Compare Performance of Best Tree with Random Forest in Validation
+```{r}
+knitr::kable(rbind(validation_metrics_tree, validation_metrics_rf))
+```
+The Random Forest model performed better than the pruned CART model across all major performance metrics. Its RMSE of 829.31 was lower than the CART’s 894.68, indicating smaller overall prediction errors. The Random Forest also achieved a lower MAE (629.59 vs. 713.39) and a lower MAPE (29.32% vs. 34.74%), meaning its predictions were more accurate on average both in absolute and percentage terms. Both models slightly under-predicted travel spending, as shown by their negative mean errors, but the Random Forest showed a smaller bias (MPE = −12.79%) compared to the CART model (MPE = −14.75%).\
+
+Overall, the Random Forest demonstrated stronger predictive performance and greater accuracy, while the CART model remains simpler and more interpretable. Considering these results, the Random Forest is the better model for deployment.
+
+## DEPLOYMENT
+
+### Score to the 20 New Cases (Propspects to Potentially Target)   
+
+```{r}
+### Score to the 20 New Cases (Prospects to Potentially Target)
+predicted_new_rf <- predict(rf_model, myScoreData)
+pip_rf <- cbind(myScoreData, RF_Pred = predicted_new_rf)
+knitr::kable(pip_rf[order(pip_rf$Income), ],
+             caption = "Predicted TravelSpend for 20 New Prospects (Random Forest Model)")
+
+```
+The Random Forest model provides individualized travel spending predictions for each of the 20 prospective customers. For example, a customer with a college degree but no credit card and moderate income of about $54,000 is predicted to spend approximately $1,836 annually on travel. In contrast, a customer without a college degree but with a credit card and a slightly higher income of around $66,000 is expected to spend about $1,816. These results show that predicted travel spending does not increase strictly with income but instead depends on a combination of behavioral and demographic factors such as credit card ownership and education level. 
+
+### Insights and Recommendations
+The Random Forest model ultimately proved to be the stronger predictive tool in this analysis. It consistently outperformed the pruned CART model across all major performance metrics, producing lower errors and more stable predictions. These results confirm that while the CART model remains simpler the Random Forest provides superior predictive accuracy and generalization and is therefore the most appropriate model for deployment.\
+
+The variable importance results from the Random Forest also provide valuable behavioral insights. CreditCard ownership emerged as the dominant predictor, followed by College education. This suggests that travel spending behavior depends less on raw income and more on financial and lifestyle indicators such as access to credit and education level.\
+
+From a marketing  standpoint, these insights can translate into several actionable segmentation. Targeting should focus less on income brackets and more on financial behavior and educational lifestyle indicators. Relationship marketing strategies can strengthen retention among these segments. Since the model indicates that customers without credit cards often spend more, the agency could design loyalty programs or points systems that reward consistent saving.\
+
+Customers with higher education likely occupy better jobs, possess higher financial confidence, and value travel as a rewarding and enriching experience. By aligning marketing strategies with these behavioral insight the travel agency can increase customer engagement.\
+
+Finally, regarding to recommendations for the model the Random Forest model can be further strengthened through several improvements by including additional behavioral and transactional variable, such as trip frequency, average booking value, preferred destinations, and recent engagement with marketing emails or promotions.
+
+Also implementing regular retraining schedules, like for example, every six months, this will ensure that the model adapts to evolving customer behavior, seasonal trends, and economic changes affecting travel demand, specially in that type of industry.
+
+
+
+
+

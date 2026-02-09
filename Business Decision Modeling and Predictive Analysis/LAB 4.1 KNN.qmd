@@ -1,0 +1,365 @@
+---
+title: "DAT-4253 LM 4.1 -KNN"
+author: "Gabriela Chajon"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: false
+toc-location: left
+number-sections: false
+editor: source
+  markdown: 
+    wrap: sentence
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r, libraries, include=FALSE, echo=FALSE}
+library(DataExplorer)
+library(tidyverse)
+# classification -- NB, KNN, Decision Trees
+library(caret)
+library(gains)
+library(pROC)
+#library(klaR)
+```
+
+```{r}
+library(readxl)
+HR_Data <- read_excel("LAB_4.xlsx",sheet = "HR_Data")
+HR_Score <- read_excel("LAB_4.xlsx",sheet = "HR_Score")
+head(HR_Data)
+head(HR_Score)
+```
+
+# BUSINESS UNDERSTANDING
+
+## Problem Narrative (from Jaggia, et al., 2023, p 458)
+
+"HR. Daniel Lara, a human resources manager at a large tech consulting firm, has been reading about using analytics to predict the success of new employees. With the fast-changing nature of the tech industry, some employees have had difficulties staying current in their field and have missed the opportunity to be promoted into a management position. Daniel is particularly interested in whether or not a new employee is likely to be promoted into a management role after 10 years with the company. In the accompanying data file, he gathers information on 300 current employees who have worked for the firm for at least 10 years. The information was based on the job application that the employees provided when they originally applied for a job at the firm. For each employee, the following variables are listed: Promoted (1 if promoted within 10 years, O otherwise), GPA (college GPA at graduation), Sports (number of athletic activities during college), and Leadership (number of leadership roles in student organizations)."
+
+## Business Problem
+
+-The goal of the model is to classify employees as likely to be promoted to a management position within 10 years or not -Train a k-Nearest Neighbors (kNN) classification model using employee application data (60% of dataset for training) -Report performance using:Misclassification Rate, Accuracy Rate, Sensitivity, Precision, and Specificity -Report performance using the following charts: Cumulative Lift, Decile-wise Lift, and the ROC Curve Score model to classify new employees as likely to be promoted or not
+
+# DATA UNDERSTANDING
+
+## EDA
+
+```{r, dimensions}
+summary(HR_Data)
+cat("HR_data dimensions:"); dim(HR_Data); cat("\nHR_data dimensions:"); dim(HR_Score)
+```
+
+-   HR_Data has **300 rows and 4 variables** (Promoted, GPA, Sports, Leadership), while HR_Score has 6 rows and 4 variables.\
+-   The target variable, Promoted, shows that **92 employees (30.7%) were not promoted** within 10 years, and 208 employees (69.3%) were promoted, indicating the dataset is slightly imbalanced.\
+-   GPA ranges from **2.50 to 4.00**, with an average of 3.27 and a median of 3.25, suggesting most employees graduated with above-average academic performance.\
+-   The Sports variable ranges from **0 to 6**, with an average of **2.93** and a median of **3**, indicating that most employees participated in 1 to 5 athletic activities during college.\
+-   Leadership roles range from **0 to 4**, with an average of **1.92** and a median of **2**, showing that most employees held 1 to 3 leadership positions in student organizations.
+
+```{r, understanding}
+HR_Data %>% str()     		# info about the dataframe and variables 
+HR_Data %>% head(10)			# look at first 10 observations
+HR_Data %>% tail(10)
+HR_Score %>% head(10)
+HR_Data %>% glimpse()		# glimpse the dataset
+HR_Data %>% plot_intro()	# plots the output from the introduce() function as a visualization
+```
+
+-Viewing the first and last 10 rows shows a mix of employees who were promoted and not promoted, with varying levels of GPA, sports participation, and leadership experience.
+
+-The dataset has **no missing values**, meaning every observation has complete information for all variables.
+
+Overall, HR_Data provides a clean and complete dataset suitable for training a kNN model to predict employee promotion based on GPA, Sports, and Leadership.
+
+### Histogram
+
+```{r, histogram}
+library(DataExplorer)
+plot_histogram(HR_Data)
+```
+
+-GPA: The most frequent GPAs are 3.1 and 3.3, while the least frequent are around 2.5 and 4.0. -Leadership: The most frequent leadership scores are 1, 2, and 3, and the least frequent are 0 and 4, indicating that very low or very high leadership involvement is rare. -Sports: The most common numbers of athletic activities are 1, 3, and 5, whereas the least frequent are 0 and 6
+
+###Distribution
+
+```{r, promoteddistribution}
+library(dplyr)
+
+HR_Data %>%
+  count(Promoted) %>%
+  mutate(Percent = round(100 * n / sum(n), 1))
+
+library(ggplot2)
+ggplot(HR_Data, aes(x = factor(Promoted), fill = factor(Promoted))) +
+  geom_bar() +
+  scale_fill_manual(values = c("lightblue", "salmon"), labels = c("No", "Yes")) +
+  labs(x = "Promoted", y = "Count", title = "Promotion Distribution") +
+  theme_minimal()
+```
+
+The dataset contains 300 employees, of whom 208 (69.3%) were promoted within 10 years, while 92 (30.7%) were not promoted. This shows that the majority of employees in the dataset experienced a promotion, indicating a generally high promotion rate.
+
+### Box Plot
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Ensure Promoted is a factor
+HR_Data <- HR_Data %>%
+mutate(Promoted = factor(Promoted, levels = c(0,1), labels = c("0", "1")))
+
+# Reshape to long format
+HR_long <- HR_Data %>%
+pivot_longer(cols = c(GPA, Sports, Leadership),
+names_to = "Variable",
+values_to = "Value")
+
+# Horizontal boxplots: Promoted on y, Value on x
+ggplot(HR_long, aes(x = Value, y = Promoted, fill = Promoted)) +
+geom_boxplot(alpha = 0.7) +
+facet_wrap(~Variable, scales = "free") +
+theme_minimal() +
+labs(title = "Predictor Distributions by Promotion Outcome",
+x = "Value", y = "Promoted") +
+scale_fill_manual(values = c("lightblue", "salmon"))
+
+```
+
+-The median GPA for non promoted individuals is slightly higher than for promoted individuals -The majority of promoted employees have higher number of leadership roles and number of sports activities than the majority of non-promoted employees. -The only clear outlier is for the "Leadership" variable for those who were not promoted
+
+### Heatmap
+
+```{r, heatmap}
+cor(HR_Data[, c("GPA","Sports","Leadership")])
+HR_Data %>% plot_correlation()
+```
+
+-The correlation between GPA and Sports is approximately -0.001, indicating that there is no relationship between GPA and the number of athletic activities.
+
+-The correlation between GPA and Leadership is approximately 0.062, showing a very weak positive relationship; a higher GPA is slightly associated with holding more leadership roles, but the effect is minimal.
+
+-The correlation between Sports and Leadership is approximately -0.093, reflecting a very weak negative relationship; participating in more athletic activities is slightly associated with holding fewer leadership roles, but the effect is minimal.
+
+# Data Preparation
+
+## Scaling
+
+```{r, scaling}
+## standardize the non-target variables with the scale command  (do not standardize the target 0/1 variable)
+HR_Data1 <- scale(HR_Data[2:4])  
+
+## merge the scaled data back with the enrollment variable
+HR_Data1<- data.frame(HR_Data1, HR_Data$Promoted)
+
+## fix the name of the Enrollment variable and convert it to a factor (req for KNN depvar)
+colnames(HR_Data1)[4] <- 'Promoted'
+HR_Data1$Promoted<- as.factor(HR_Data1$Promoted)
+
+head(HR_Data1)
+```
+
+-The predictor variables (GPA, Sports, and Leadership) were standardized using the scale() function to ensure that all features contribute equally to distance calculations in KNN. -The scaled predictors were combined with the Promoted variable to create the dataset HR_Data1, which is ready for KNN modeling. -The Promoted column was converted to a factor, as KNN in R requires the dependent variable to be a categorical factor.
+
+## Data Partition
+
+#### Partition the data 60/40 Train/Test
+
+```{r, partition}
+set.seed(1)
+myIndex<- createDataPartition(HR_Data1$Promoted, p=0.6, list=FALSE)
+trainSet <- HR_Data1[myIndex,]
+testSet <- HR_Data1[-myIndex,]
+```
+
+-The dataset HR_Data1 was split into training(60%) and testing sets(40%) to evaluate the KNN model’s performance.The seed (set.seed(1)) was set to ensure that the partitioning is reproducible.
+
+# Modeling
+
+## Run a 10-fold Cross-Validation and Train the KNN Model
+
+```{r, 10fold}
+# Implement a 10-fold cross-validation
+myCtrl <- trainControl(method="cv", number=10)
+
+# Choose to try nine possible k values ranging from 2 to 10 inclusive
+myGrid <- expand.grid(.k=c(2:10))
+
+# Training the data using the KNN algorithm on the training dataset
+set.seed(1)
+KNN_fit <- train(Promoted ~ ., data=trainSet, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit
+
+```
+
+A k-Nearest Neighbors model was trained using GPA, Sports, and Leadership as predictors of promotion. Using 10-fold cross-validation, the model tested k values between 2 and 10. The results showed that k = 7 produced the best accuracy (78.1%) and the highest Kappa (0.44), meaning the model performs moderately better than random classification. Therefore, the final model uses k = 7 to predict whether employees are likely to be promoted within 10 years.
+
+# Evaluation
+
+## Display and interpret the confusion Matrix
+
+```{r}
+KNN_Class <- predict(KNN_fit, newdata = testSet)
+
+# Show the confusion matrix and associated performance measures
+confusion_matrix<-confusionMatrix(KNN_Class, testSet$Promoted, positive = '1')
+
+confusion_matrix
+
+misclass_rate <- 1 - confusion_matrix$overall["Accuracy"]
+misclass_rate
+
+```
+
+-The KNN model correctly predicted 68 promoted and 22 not promoted employees, with 15 false negatives and 14 false positives. -**Sensitivity is 81.9%**, showing the model identifies promoted employees well. -**Specificity is 61.1%**, indicating lower accuracy for non-promoted employees. -Overall accuracy is 75.6%, with a **misclassification rate of 24.4%** which means those were assigned the wrong promotion status by the model.
+
+## New dataset with probabilities
+
+```{r, probabilites}
+# Create a dataset with the associated probabilities from the model -- will need this for charts
+KNN_Class_prob <- predict(KNN_fit, newdata = testSet, type ='prob')
+head(KNN_Class_prob) #look at just the first few rows
+```
+
+## Convert test target variable to numeric
+
+```{r, targettonumeric}
+# convert the Test dataset Target variable back to a numeric so we can develop the relevant charts
+testSet$Promoted <- as.numeric(as.character(testSet$Promoted))
+head(testSet)
+```
+
+-Created a dataset with the predicted probabilities that each employee in the test set will be promoted or not -The Promoted column in the test set is converted from a factor to a numeric variable to allow for charts and calculations that require numeric inputs.
+
+## Model Performance Charts
+
+### GAINS TABLE
+
+```{r}
+gains_table <- gains(testSet$Promoted, KNN_Class_prob[, 2])
+gains_table
+```
+
+-The gains table ranks employees by predicted probability of being promoted, helping identify which employees are most likely to be promoted. -The mean response rate of 0.94 (94%) means that, on average, 94% of these top-ranked employees are actually promoted, which is much higher than the overall promotion rate in the dataset (69.3%).
+
+### CUMULATIVE LIFT CHART
+
+```{r}
+plot(c(0, gains_table$cume.pct.of.total*sum(testSet$Promoted))~c(0, gains_table$cume.obs), xlab = "# of cases", ylab = "Cumulative", main="Cumulative Lift Chart", type="l")
+lines(c(0, sum(testSet$Promoted))~c(0, dim(testSet)[1]), col="red", lty=2)
+```
+
+-The black curve consistently lies above the red dashed line. This indicates that the predictive model performs substantially better than random guessing, efficiently identifying employees who are likely to be promoted.
+
+### Decile-Wise Lift Chart
+
+```{r}
+# Show the decile-wise lift chart -- not will not get 10 bars if there are less than ten possibility probability values -- doesn't force 10
+barplot(gains_table$mean.resp/mean(testSet$Promoted), names.arg=gains_table$depth, xlab="Percentile", ylab="Lift", ylim=c(0,3), main="Decile-Wise Lift Chart")
+```
+
+-The chart shows that the model is a strong performer, especially in the early deciles. -The high lift in the initial bars (26, 41, and 60) demonstrates that it successfully ranks the most likely "promoted" cases at the top.
+
+#### ROC Curve with AUC
+
+```{r}
+# Show the ROC chart along with the AUC metric
+roc_object <- roc(testSet$Promoted, KNN_Class_prob[,2])
+plot.roc(roc_object)
+pROC::auc(roc_object)
+```
+
+An AUC of 0.8015 is considered good, indicating a strong ability to differentiate between "promoted" and "non-promoted" employees.
+
+# Deployment
+
+```{r, using score dataset}
+PreProcessing <- preProcess(HR_Data[ , 2:4], method = c("center", "scale"))
+# Use the mean and standard deviations to standardize the independent variables from the Score dataset
+myHR_Data1 <- predict(PreProcessing, HR_Score)
+
+# Now score these new records base on our model
+KNN_Score <- predict(KNN_fit, newdata=myHR_Data1)
+
+# Append the scores back to the dataframe so we can see all of the variables
+HR_Score <- data.frame(HR_Score, KNN_Score)
+head(HR_Score)
+```
+
+```{r, Look at the results}
+# Look at the predictions by independent vars to describe targeting
+table(HR_Score$GPA, HR_Score$KNN_Score)
+table(HR_Score$Sports, HR_Score$KNN_Score)
+table(HR_Score$Leadership,HR_Score$KNN_Score)
+
+# Look at mean values for GPA, Sports and Leadership by Predicted Class (1=predicted to be Promoted)
+library(dplyr)
+HR_Score %>%
+group_by(KNN_Score) %>%
+summarize(xGPA=mean(GPA), xSports=mean(Sports), xLeadership=mean(Leadership))
+```
+
+-In this part the independent variables (GPA, Sports, Leadership) from the dataset were standardized using the same mean and standard deviation from the training data to ensure consistency with the KNN model. -The standardized data was scored with the KNN model, and the predictions were added to the original dataset to show each employee’s predicted promotion status. -The summary shows that employees predicted not to be promoted have slightly higher GPA (3.33) but lower Sports (1.0) and Leadership (1.0), while those predicted to be promoted have slightly lower GPA (3.28) but higher Sports (2.75) and Leadership (2.5). This suggests that the KNN model may be weighting participation in Sports and Leadership roles more heavily than GPA when predicting promotion.
+
+# Analysis
+
+### 1. Business Understanding
+
+HR manager Daniel Lara wants to predict which employees are likely to be promoted into management within 10 years, using employee application data including GPA, Sports participation, and Leadership roles.
+
+### 2. Data Understanding
+
+-The KNN model may rely more on Sports and Leadership than GPA when predicting promotions, since these variables show clearer differences between promoted and non-promoted employees. -Weak correlations among predictors indicate that each feature provides mostly independent information, which can help KNN distinguish patterns effectively.
+
+### 3. Data Preparation
+
+Scaling: Standardized predictors (GPA, Sports, Leadership) to ensure equal contribution in distance calculations for kNN. -Partitioning:60/40 train/test split ensures sufficient data for both model training and evaluation. -Proper scaling and partitioning improves model stability and ensures fair comparison between features.
+
+### 4. Modeling
+
+KNN Training: 10-fold cross-validation used. Tested k values from 2–10; best performance at k = 7 (accuracy = 78.1%, Kappa = 0.44). Considering 7 nearest neighbors provides a good balance: the model captures relevant patterns in promotion outcomes. Accuracy = 78.1% and Kappa = 0.44 indicate moderate predictive power confirming the model is better than random guessing but not perfect.
+
+### 5. Evaluation
+
+#### Confusion Matrix & Metrics:
+
+-The model effectively identifies promoted employees (Sensitivity = 81.9%) -Lower specificity (61.1%) indicates that the model struggles to correctly identify non-promoted employees, which could be due to the imbalance in the dataset (more promoted than non-promoted). -Overall accuracy (75.6%) and misclassification rate (24.4%) suggest the model performs reasonably well, but there is room for improvement, especially for the smaller non-promoted class.
+
+#### Gains & Lift:
+
+-Employees ranked highest by predicted probability have a 94% promotion rate, showing the model successfully concentrates likely promotions at the top. -The lift over the baseline (69.3%) indicates the model outperforms random guessing, making it useful for targeting high-potential employees. -The model is particularly valuable for decision-making in resource allocation, allowing HR to focus on employees with the greatest chance of promotion.
+
+#### Cumulative and decile-wise lift
+
+-The strongest lift occurs in the top deciles, meaning the model identifies the most promising employees effectively. -Performance drops in lower deciles, suggesting reduced accuracy for employees with mid- or low predicted promotion probability..
+
+#### ROC & AUC:
+
+-The ROC curve leaning toward the upper-left indicates the model distinguishes well between promoted and non-promoted employees across thresholds. -AUC = 0.8015 confirms strong overall discrimination, meaning there’s an 80% chance a randomly selected promoted employee will score higher than a non-promoted employee.
+
+### 6. Deployment
+
+-The HR_Score dataset was standardized and predictions were generated with the KNN model. Employees predicted to be promoted show higher Sports (2.75 vs. 1.0) and Leadership (2.5 vs. 1.0) scores, indicating that the model places greater importance on extracurricular and leadership experience. -Academic performance has less influence on the model’s promotion predictions than non-academic factors. -By appending the predictions to the original dataset, it is evident that the model effectively identifies high-potential employees
+
+# Recommendations
+
+-Based on the KNN model results, leadership experience and involvement in extracurricular activities (like sports) appear to be stronger indicators of promotion potential than just GPA so HR should focus on employees who demonstrate initiative and leadership outside of academics when planning programs. -The model is particularly strong at identifying top candidates. For resource allocation, HR can prioritize training for employees identified as high-potential by the model.This ensures that the company invests in the people who are most likely to thrive in management roles, maximizing ROI on development programs.
+
+-The firm should incorporate additional predictors, such as work experience to improve specificity and overall predictive power for promotion outcomes that would make the model better and have stronger power of prediction.
+
+# References
+
+ChatGPT (GPT-5 Mini) was used in the generation of this code. Version: GPT-5 Mini, Date: 2025-09-21
+
+Jaggia, S., Kelly, A., Lertwachara, K., & Chen, L. (2023). *Business analytics: Communicating with numbers* (2nd Ed.). McGraw-Hill.

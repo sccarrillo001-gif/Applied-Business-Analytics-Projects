@@ -1,0 +1,278 @@
+---
+title: "Lab 9.2 Regression with transformation"
+author: "Gabriela Chajon C"
+date: "Due Date: October 12, 2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  messages: false
+  echo: true
+  include: true
+toc: true
+editor: source
+---
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r}
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(car)       #for the VIF
+library(Metrics)   # for regression evaluation like RMSE
+library(summarytools)
+library(dlookr)     #diagnose_outlier
+library(formattable)
+library(questionr)
+library(caret)
+library(psych)
+```
+
+## BUSINESS UNDERSTANDING
+
+This project aims to help Jack Person, Executive Director of a public Happiness policy organization, understand the key factors that shape personal well-being, measured through Happiness scores. Previous studies have shown two consistent patterns:
+  - Happiness tends to decrease in middle age, with a possible low point in one’s 40s. \
+  - Higher incomes contribute to happiness, though the effect diminishes once income exceeds $75,000. \
+
+Using survey data from 100 working adults, our objective is to analyze the relationship between age, income, and happiness, identify significant predictors, and provide insights into how age and income influence Happiness. \
+
+# DATA UNDERSTANDING
+
+```{r}
+library(readxl)
+Happiness_data  <- read_excel("LAB_9.xlsx", sheet = "Happiness") 
+
+head(Happiness_data)
+tail(Happiness_data)
+```
+## DATA UNDERSTANDING
+
+### Summary Statistics
+```{r}
+psych::describe(Happiness_data, fast=TRUE)
+```
+On average, Happiness scores are 77.25 out of 100, showing most people report being fairly happy. The average Age is 56.48 years, meaning most respondents are middle-aged or older. Income averages about $110820 per year but varies widely, ranging from $20,000 to $198,000.
+
+Overall, the distributions for all three variables are fairly balanced, with no strong skew or extreme outliers.
+
+#### Variable distributions\
+```{r}
+plot_intro(Happiness_data)
+plot_histogram(Happiness_data)
+plot_correlation(Happiness_data)
+
+```
+The dataset contains 100 complete records with no missing observations across all variables. All columns are continuous.\
+
+**Distributions**
+The Happiness variable is centered around 70–90, showing that most respondents report high well-being levels. The Age variable ranges from 31 to 80, with many observations between 50 and 70 years old, suggesting a sample dominated by middle-aged and older adults. Income varies widely—from $20,000 to $198,000—with a slightly right-skewed shape, meaning a few higher-income individuals raise the upper range. Overall, the variables are well-behaved with no extreme outliers.
+
+**Correlation matrix**
+The correlation matrix shows that Happiness is moderately and positively related to Income (r ≈ 0.65), indicating that higher income tends to correspond to higher happiness levels. The relationship between Happiness and Age is weaker (r ≈ 0.31), suggesting that happiness increases slightly with age but not as strongly as with income. The near-zero correlation between Age and Income (r ≈ 0.04*) show minimal multicollinearity.
+
+#### Outliers
+```{r}
+outliers <- diagnose_outlier(Happiness_data) 
+knitr::kable(outliers, align = "c")
+boxplot(Happiness_data$Happiness, horizontal = TRUE)
+
+Happiness_data$constant <- "x"  #plot_boxplot needs a by-variable. this ensures a single plot
+plot_boxplot(Happiness_data, by="constant")
+```
+No outliers were detected in any of the variables—Happiness, Age, or Income. The outlier ratio for all three variables is 0%, and the mean values remain identical whether or not potential outliers are considered. The boxplot confirms that Happiness values are evenly distributed within the expected range (approximately 50–100) without extreme deviations. Overall, the dataset is clean and does not require any trimming or transformation to address outlier effects.
+
+## Scatter Plots 
+
+```{r}
+ggplot(Happiness_data, aes(x = Age, y = Happiness)) +
+geom_point(alpha = 0.8) +
+geom_smooth(method = "loess", se = FALSE) +
+labs(title = "Happiness vs Age", x = "Age (years)", y = "Happiness") +
+theme_minimal()
+
+ggplot(Happiness_data, aes(x = Income, y = Happiness)) +
+geom_point(alpha = 0.8) +
+geom_smooth(method = "loess", se = FALSE) +
+scale_x_continuous(labels = scales::dollar_format()) +
+labs(title = "Happiness vs Income", x = "Income (USD)", y = "Happiness") +
+theme_minimal()
+
+```
+The Happiness–Age scatterplot indicates a moderate positive trend overall, but the relationship is not purely linear. Happiness appears lower for some individuals in the late 50s to early 60s, with higher values again among older ages (≈70–80). that higher income levels tend to correlate with higher happiness scores. However, the data points are quite spread out, this suggests that happiness might be influenced by age, but other factors could also play a role, as there isn’t a strong, consistent pattern across all ages.\
+
+
+The Happiness–Income scatterplot shows a clear positive association: higher incomes tend to align with higher happiness scores. The slope appears strongest at lower–middle incomes where increases in income correspond to measurable improvements in happiness levels but then flattens at the upper end.
+
+### Transform Income variable and plot Happiness by log(income).
+
+```{r}
+Happiness_data$log_Income <- log(Happiness_data$Income)
+
+ggplot(Happiness_data, aes(x = log_Income, y = Happiness)) +
+geom_point(color = "purple", alpha = 0.8) +
+geom_smooth(method = "loess", se = FALSE, color = "blue") +
+labs(title = "Happiness vs log(Income)",
+x = "Log(Income)",
+y = "Happiness (0–100)") +
+theme_minimal()
+```
+After transforming Income to log(Income), the relationship with Happiness looks more linear and consistent across the range. The cloud of points tightens at the upper end, suggesting reduced heteroskedasticity compared with the income plot from before. We still see a positive association—higher log(Income) aligns with higher happiness. Visually, there are no extreme outliers.
+
+## Data PREPARATION
+
+```{r}
+set.seed(1)
+library(ggplot2)
+library(lattice)
+library(caret)
+trainIndex <- createDataPartition(Happiness_data$Happiness, p = 0.8, list = FALSE)
+TrainSet <- Happiness_data[trainIndex, ]
+ValidationSet <- Happiness_data[-trainIndex, ]
+```
+
+## Modeling 
+
+```{r}
+
+model <- lm(Happiness ~ Age + I(Age^2) + log(Income), data = TrainSet)
+summary(model)
+
+```
+The model demonstrates strong performance. It explains about 71% of the variation in happiness (R² = 0.7137; Adjusted R² = 0.7025). The overall F-statistic (F(3,77)=63.97, p < 2.2e−16) confirms that the predictors jointly have a significant impact on happiness, meaning each variable contributes to explaining differences in happiness.
+
+Age: Negative linear effect of age. Holding other things constant, each year initially decreases happiness by 2.743 units. \
+
+Age²: Positive quadratic effect. Indicates happiness starts increasing again after a certain age. The lowest predicted happiness occurs around age 51. \
+
+log(Income): Positive effect of log-transformed income. Suggests diminishing returns of income on happiness. For each 1% increase in income, happiness increases by approximately 0.131 units, on average, ceteris paribus. \
+
+#### Compute the optima (min) for Age
+
+```{r}
+b1 <- coef(model)["Age"]
+b2 <- coef(model)["I(Age^2)"]
+
+optimal_age <- -b1 / (2 * b2)
+optimal_age
+```
+The computed optimum value for Age is approximately 51 years, the point where the trend shifts from declining to improving. This means that, holding income constant, predicted happiness reaches its lowest point around age 51. After this age, the model shows that happiness begins to increase again. After this age, the model shows that happiness begins to increase again. 
+
+### Evaluation: 
+
+#### Prediction on Validation Set
+
+```{r}
+library(Metrics)   # for RMSE() and MAE()
+library(dplyr)
+
+ValidationSet$log_Income <- log(ValidationSet$Income)
+prediction_valid <- predict(model, newdata = ValidationSet)
+
+validation_results <- cbind(ValidationSet, pred = prediction_valid)
+
+err  <- validation_results$Happiness - validation_results$pred
+RMSE <- sqrt(mean(err^2))
+MAE  <- mean(abs(err))
+MAD  <- median(abs(err))
+MAPE <- mean(abs(err) / validation_results$Happiness) * 100
+
+knitr::kable(
+  data.frame(
+    Metric = c("RMSE", "MAE", "MAD", "MAPE (%)"),
+    Value  = c(RMSE, MAE, MAD, MAPE)
+  ),
+  digits = 3
+)
+```
+The RMSE = 5.839 indicates that the model’s predictions differ from the actual happiness values by about 5.8 points on average. The MAE = 4.870 and MAD = 4.584 confirm that most prediction errors fall within about 4–5 points, showing consistent accuracy across cases. The MAPE = 6.28% means that, on average, the model’s predicted happiness scores are within about 6% of the true values. Overall, these results show that the model generalizes well to new data.
+
+#### REC Curve
+
+```{r}
+
+library(ggplot2)
+
+plot_rec_curve <- function(actual, predicted, model_name) {
+residuals <- abs(actual - predicted)
+
+
+
+
+rec_data <- data.frame(Residuals = sort(residuals))
+rec_data$Cum_Percent <- (1(rec_data)) / nrow(rec_data) * 100
+
+
+
+
+ggplot(rec_data, aes(x = Residuals, y = Cum_Percent)) +
+geom_line(color = "blue") +
+labs(title = paste("REC Curve -", model_name),
+x = "Residual Error",
+y = "Cumulative Percentage (%)") +
+theme_minimal()
+}
+
+plot_rec_curve(ValidationResults$Happiness,
+ValidationResults$pred,
+"Happiness Prediction Model")
+
+```
+The REC curve shows how well the model’s predictions align with actual happiness scores. The curve increases smoothly, reaching about 50% cumulative accuracy at a residual error of ~5 points, and nearly 100% by around 10 points. 
+
+The steady upward shape with no sharp jumps indicates consistent performance and low error variability, confirming that the model predicts happiness reliably across individuals. The overall REC score (area under the curve) would likely fall around 0.85–0.90, which represents strong predictive accuracy for a regression model using only age and income as predictors.
+
+
+# DEPLOYMENT
+
+### Re-estimate the Model on the Full Dataset
+```{r}
+library(dplyr)
+Happiness_data <- Happiness_data %>%
+  mutate(log_Income = log(Income))
+
+full_model <- lm(Happiness ~ Age + I(Age^2) + log_Income, data = Happiness_data)
+summary(full_model) 
+```
+The full model fits well, explaining about 70% of the variation in happiness (R² = 0.700; Adjusted R² = 0.691) with a residual error of about 6.5 points. All main predictors are statistically significant. Age has a negative effect, meaning happiness decreases as age increases at first. Age² is positive, showing that happiness begins to rise again after midlife, with the lowest point near age 50. log(Income) has a positive effect, indicating that higher income leads to higher happiness, but the effect gets smaller at higher income levels. Overall, the model confirms that happiness tends to dip around age 50 and that income increases happiness but with diminishing returns.
+
+## Predict Income = $80,000; Age = c(30, 45, 60)
+
+```{r}
+datadeploy1 <- data.frame(Age = c(30, 45, 60), log_Income = log(80000))
+predictions1 <- predict(full_model, newdata = datadeploy1)
+predictions1
+```
+At a fixed income of $80,000, predicted happiness is 79.09 for a 30-year-old, 69.72 for a 45-year-old, and 71.18 for a 60-year-old. This pattern shows that happiness is highest at younger ages, drops in midlife, and then rises again later, matching the model’s curved age effect. Even when income stays the same, differences in age explain noticeable variation in happiness levels, with midlife showing the lowest predicted well-being.
+
+##Predict Age = 60; Income = c($25,000, $75,000, $125,000)
+
+```{r}
+new_data2 <- data.frame(Age = 60, log_Income = log(c(25000, 75000, 125000)))
+
+predictions2 <- predict(full_model, newdata = new_data2)
+predictions2
+```
+At a fixed age of 60 years, predicted happiness is 56.39 for an income of $25,000, 70.36 for $75,000, and 76.86 for $125,000. These results show that happiness increases as income rises, but the rate of improvement slows at higher income levels. These results clearly show a positive relationship between income and happiness, particularly among older adults.
+
+## Insights
+
+- Happiness tends to decline during midlife (around the 40s–50s) and increase again in later years, reflecting how life stage influences well-being. Middle-aged adults may experience more pressure or stress, leading to temporarily lower happiness before it improves with age and stability.
+
+- Increases in income have a strong positive effect on happiness at lower income levels, but the impact becomes smaller as income rises. This shows that money helps most when meeting essential needs and providing financial security.
+
+- Younger adults tend to report higher happiness at the same income level compared to older adults, but older individuals still benefit from income gains. This means financial resources remain important for well-being across all ages, though life stage differences persist.
+
+## Recommendations for Mr. Person
+- The model confirms a noticeable decrease in happiness around the early 50s, supporting prior research that individuals are least happy during midlife. Mr. Person’s organization could design public campaigns focused on stress management, mental health, and life balance for adults in their 40s and 50s. From a marketing perspective, this segment represents a key audience for messages of renewal, purpose, and resilience.
+
+- Because happiness rises most between low and middle incomes, experiential initiatives could show how simple, affordable changes—like volunteering or active living enhance everyday happiness. Instead of focusing on money as the end goal, experiences should demonstrate the emotional benefits of security and community connection.
+
+- Because the marginal effect of age on happiness becomes less negative and turns positive around ~51, Mr. Person can segment audiences by life stage and psychological need—for example, midlife adults seeking stress relief and purpose versus younger adults focused on growth. Adding measures like perceived control, stress, and life satisfaction can improve predictions and guide targeted well-being interventions that reflect these patterns.”
+
+- Person’s organization can design preventive initiatives for adults in their late 30s and 40s—before they reach the lower point around age 51. These programs could focus on stress management,  planning, and control techniques, helping individuals build coping strategies before midlife pressures peak. Likewise, for those in their 50s and beyond, follow-up programs could emphasize renewal, purpose, and community engagement, supporting the upward recovery in happiness that follows the lower point.
