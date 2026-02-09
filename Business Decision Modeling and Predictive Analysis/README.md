@@ -1,1 +1,1 @@
-
+This folder contains projects completed by Gabriela Chajon for the Business Decision Modeling and Predictive Analysis course at John Brown University, showcasing statistical modeling, predictive analytics, machine learning, and data-driven decision-making.
