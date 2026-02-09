@@ -1,1 +1,1 @@
-
+This folder contains projects completed by Gabriela Chajon for the Data Visualization course at John Brown University, showcasing data analysis, visualization techniques, and applied analytical methods.
