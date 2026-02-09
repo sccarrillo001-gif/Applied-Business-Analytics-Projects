@@ -1,0 +1,1179 @@
+---
+title: "Final Classification Report"
+subtitle: "Diabetes Prediction using Pima Indians Dataset"
+author: "Gabriela Chajon"
+date: "12/10/2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  message: false
+  echo: false
+  include: true
+toc: true
+editor: source
+---
+
+```{r, libraries}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(gridExtra)
+library(caret)
+library(gains)
+library(pROC)
+library(klaR)
+library(rpart)
+library(rpart.plot)
+```
+
+# BUSINESS UNDERSTANDING
+
+Diabetes is one of the most costly and widespread chronic diseases worldwide, placing a major financial burden on healthcare systems. Hospitals and clinics spend significant resources managing diabetes-related complications that could often be prevented through early identification and intervention. Because manual screening of every patient is time-consuming and expensive, there is a strong business need for classification models that can help identify individuals at higher risk. Using classification modeling allows healthcare organizations to enable early detection, allocate resources more efficiently, and reduce long-term treatment costs.
+
+This project uses the Pima Indians Diabetes Dataset from the National Institute of Diabetes and Digestive and Kidney Diseases. The goal is to develop a classification model that determines whether a patient has diabetes based on medical and demographic measurements.
+
+The dataset includes 768 female patients, all aged 21 years or older and of Pima Indian heritage. The classification model will analyze patterns in diagnostic variables to help healthcare professionals categorize patients into diabetic or non-diabetic groups.
+
+**Research Questions**
+
+1.  **Which medical and demographic factors are most influential in classifying whether a patient has diabetes?**\
+    This question seeks to understand which predictor variables (such as glucose level, BMI, insulin, or age) have the strongest relationship with diabetes diagnosis.
+
+2.  **How accurately can the classification model categorize patients as diabetic or non-diabetic using this dataset?**\
+    This explores the model’s overall performance, measured through metrics such as accuracy, precision, recall, and F1-score.
+
+# DATA UNDERSTANDING
+
+### Previewing the Dataset
+
+```{r, loading dataset}
+diabetes_data <- read.csv("diabetes.csv", sep =",")
+
+# Turn dependent variable into factor
+
+diabetes_data$Outcome <- as.factor(diabetes_data$Outcome)
+```
+
+The predictors in this dataset represent key medical and demographic factors commonly associated with diabetes risk. High glucose and insulin levels may indicate impaired glucose regulation, while measures such as BMI, skinfold thickness, and blood pressure reflect overall metabolic health. Demographic variables like age, family history, and pregnancy frequency also play important roles, as hormonal changes, aging, and genetic factors can increase the likelihood of developing diabetes.
+
+**Predictors:**\
+- **Pregnancies** (Discrete numerical): Number of times the patient has been pregnant.\
+- **Glucose** (Continuous numerical): Plasma glucose concentration after a 2-hour oral glucose tolerance test.\
+- **BloodPressure** (Continuous numerical): Diastolic blood pressure (mm Hg).\
+- **SkinThickness** (Continuous numerical): Triceps skinfold thickness (mm).\
+- **Insulin** (Continuous numerical): 2-hour serum insulin (µU/mL).\
+- **BMI** (Continuous numerical): Body mass index (weight in kg / height in m²).\
+- **DiabetesPedigreeFunction** (Continuous numerical): A function estimating the likelihood of diabetes based on family history.\
+- **Age** (Discrete numerical): Patient’s age in years.
+
+**Target Variable:**\
+- **Outcome** (Categorical binary): Indicates whether the patient has diabetes (1 = Yes, 0 = No).
+
+## Exploratory Data Anlaysis- EDA
+
+### Data Summary
+
+```{r, data introduction}
+diabetes_data %>% head(5)
+diabetes_data %>% tail(5)
+diabetes_data %>% str()     		              
+diabetes_data %>% glimpse()			              
+diabetes_data %>% DataExplorer::introduce()		
+diabetes_data %>% DataExplorer::plot_intro()	
+```
+
+The data has 768 rows and 9 variables, with 0 discrete and 9 continuous columns. All rows are 100% complete and there are 0 missing observations.Although the dataset contains no coded NA values, several medical measurements (Glucose, BloodPressure, SkinThickness, Insulin, BMI) contain zeros that are physiologically implausible.
+
+### Data proportions
+
+```{r, prop}
+prop.table(table(diabetes_data$Outcome))
+```
+
+The target variable (Outcome) shows that approximately 65% of patients are non-diabetic and 35% are diabetic, showing a moderately imbalanced dataset that will be addressed during model evaluation.
+
+### Descriptive Statistics
+
+```{r, descrptive stats}
+summary(diabetes_data)
+```
+
+The dataset includes 768 female patients, with an average of 3.85 pregnancies and a median age of 29 years. The mean glucose level (120.9 mg/dL) and BMI (31.99 kg/m²) indicate that many patients fall within a range associated with higher diabetes risk.The average diastolic blood pressure is 69.1 mm Hg, mean skin thickness is 20.5 mm, and average insulin level is 79.8 µU/mL, showing considerable variation across patients. Several variables, Glucose, BloodPressure, SkinThickness, Insulin, and BMI, contain zero values, which are medically implausible and will be treated as missing values before modeling.\
+
+### Histograms and Density Plots
+
+```{r, histograms}
+diabetes_data %>% plot_histogram()
+diabetes_data %>% plot_density()
+```
+
+The histograms and density plots show that most continuous variables are right-skewed indicating that lower values are more common. Glucose and BMI display approximately normal shapes with little skewness, while Insulin and SkinThickness are highly skewed with noticeable spikes at zero. BloodPressure appears roughly symmetric but also contains some values at 0. Age, Pregnancies, and DiabetesPedigreeFunction are right-skewed, showing that most participants are younger, have had fewer pregnancies, and that family history scores are generally low.
+
+### Boxplots
+
+```{r,boxplots}
+diabetes_data %>% plot_boxplot(by = "Outcome")
+
+```
+
+Boxplots of each predictor stratified by Outcome (0 vs 1) allow visual comparison of predictor distributions across diabetic and non-diabetic patients. The boxplots show differences between diabetic and non-diabetic patients across several variables. Glucose and BMI are higher among diabetic patients, confirming their strong association with diabetes risk. Age and Pregnancies also tend to be higher for those with diabetes, suggesting that older women with more pregnancies face greater likelihood of diagnosis. Insulin and DiabetesPedigreeFunction have several extreme values, indicating individual differences in insulin response and family history effects. Meanwhile, BloodPressure and SkinThickness show overlapping distributions between groups, suggesting weaker discriminatory power.
+
+### Outliers
+
+```{r}
+library(dlookr)
+dlookr::diagnose_outlier(diabetes_data)
+
+boxplot(diabetes_data$Outcome, plot = FALSE)$out
+```
+
+#### Table of Influence of Outliers
+
+```{r, table of influence}
+library(dlookr)
+diagnose_outlier(diabetes_data) %>% flextable()
+```
+
+There are several variables in the dataset that contain outliers. The highest number of outliers were detected in BloodPressure, Insulin, and DiabetesPedigreeFunction, suggesting substantial variability among patients in these measures. Insulin has very high outlier means(around 457) while BloodPressure outliers pull the mean downward. Glucose, BMI, Age and SkinThickness contain very few (less than 10) outliers indicating relatively consistent measurements for most patients.\
+
+Outliers were identified in several numeric variables but since these variations likely reflect genuine physiological differences among patients, like high glucose or insulin levels in diabetics, they were retained in the dataset.\
+
+No additional outlier treatment was applied because removing or transforming these outliers could distort medically significant information and reduce the model’s ability to detect true high-risk cases.\
+
+### Correlation Plot
+
+```{r, corrplot}
+library(corrplot)
+library(dplyr)
+
+num_vars <- diabetes_data %>%
+dplyr::select(Pregnancies, Glucose, BloodPressure, SkinThickness,
+Insulin, BMI, DiabetesPedigreeFunction, Age) %>%
+mutate(across(everything(), as.numeric)) %>%
+as.matrix()
+
+corr_matrix <- cor(num_vars, use = "complete.obs")
+
+corrplot(corr_matrix, method = "circle", type = "upper", tl.col = "black", tl.srt = 45)
+
+```
+
+The correlation plot shows mostly weak to moderate correlations among the predictor variables, suggesting that most features contribute unique information to the classification model. The strongest positive relationship appear between Age and Pregnancies indicating that older women tend to have had more pregnancies. Glucose and BMI, also show a moderate correlation, like Insulin and SkinThickness, reflecting expected links related to body composition and glucose regulation. No pair of variables shows a correlation high enough to suggest multicollinearity.
+
+# DATA PREPARATION
+
+### Data Wrangling
+
+### Addresing Missing Values
+
+```{r, addresing missing values}
+diabetes_data$Glucose[diabetes_data$Glucose == 0]<- NA
+diabetes_data$BloodPressure[diabetes_data$BloodPressure == 0] <- NA
+diabetes_data$SkinThickness[diabetes_data$SkinThickness == 0] <- NA
+diabetes_data$Insulin[diabetes_data$Insulin == 0] <- NA
+diabetes_data$BMI[diabetes_data$BMI == 0] <- NA
+
+diabetes_data$Glucose[is.na(diabetes_data$Glucose)]             <- median(diabetes_data$Glucose, na.rm = TRUE)
+diabetes_data$BloodPressure[is.na(diabetes_data$BloodPressure)] <- median(diabetes_data$BloodPressure, na.rm = TRUE)
+diabetes_data$SkinThickness[is.na(diabetes_data$SkinThickness)] <- median(diabetes_data$SkinThickness, na.rm = TRUE)
+diabetes_data$Insulin[is.na(diabetes_data$Insulin)]             <- median(diabetes_data$Insulin, na.rm = TRUE)
+diabetes_data$BMI[is.na(diabetes_data$BMI)]                     <- median(diabetes_data$BMI, na.rm = TRUE)
+
+
+DataExplorer::plot_histogram(diabetes_data)
+```
+
+Zero values in medical variables (Glucose, BloodPressure, SkinThickness, Insulin, and BMI) were identified as invalid since they are not physiologically possible. These values were recoded as missing (NA) and then imputed using the median of each variable, which preserves all observations while limiting the impact of extreme values on the imputed results.
+
+# MODELING
+
+## MODEL 1: LOGISTIC REGRESSION
+
+#### Partition 60/40 and check proportions
+
+```{r, partition}
+set.seed(1)
+diabetes_data_scaled<- createDataPartition(diabetes_data$Outcome, p=0.6, list=FALSE)
+trainSet_LR <- diabetes_data[diabetes_data_scaled,]
+testSet_LR  <- diabetes_data[-diabetes_data_scaled,]
+
+# check proportions are relevant
+cat("Full Dataset");    prop.table(table(diabetes_data$Outcome))
+cat("\nTrain Dataset"); prop.table(table(trainSet_LR$Outcome))
+cat("\nTest Dataset");  prop.table(table(testSet_LR$Outcome))
+```
+
+### Logistic Regression Model
+
+```{r, lg}
+library(caret)
+
+myCtrl <- trainControl(method="cv", number=10)
+set.seed(1)
+logit <- train(as.factor(Outcome) ~., data = trainSet_LR, 
+												method = "glm",family="binomial",
+												trControl = myCtrl)
+summary(logit)
+
+car::vif(logit$finalModel)
+```
+
+The logistic regression model identifies Glucose, BMI, and Pregnancies as the only statistically significant predictors of diabetes (p \< 0.05).\
+
+-   Glucose has the strongest effect (p \< .001), meaning higher glucose levels substantially increase the likelihood of diabetes.
+
+-   BMI is also highly significant (p \< .001), showing that higher body mass increases diabetes risk.
+
+-   Pregnancies has a smaller but significant positive effect (p \< .01), indicating that diabetes risk increases with the number of pregnancies.
+
+The model reduces deviance from 596.51 → 415.89, indicating a substantial improvement over the null model, and the AIC of 433.89 reflects a reasonably strong model fit for this dataset.\
+
+### Coefficients as Odds Ratios
+
+```{r}
+exp(coef(logit$finalModel))
+```
+
+Variable-by-variable (odds-ratio meaning):
+
+-   Glucose (OR = 1.044): Each 1-unit increase raises the odds of diabetes by 4.4%, making it the most influential predictor.
+
+-   BMI (OR = 1.114): Each additional BMI point increases diabetes odds by 11.4%.
+
+-   Pregnancies (OR = 1.122): Each additional pregnancy increases the odds by 12.2%.
+
+Bloodpressure, SkinThickness, Insulin, DiabetesPedigreeFunction, Age: Not significant here; they may contribute in non-linear models (e.g., trees/ensembles) or via interactions, but do not provide reliable linear signal on their own in this model.
+
+### Fit Metrics
+
+#### Deviance Table
+
+```{r}
+# logistic regression without cross validation
+logit_full <- glm(Outcome ~ ., family = binomial(link = "logit"), data = trainSet_LR)
+
+# Create the null model (intercept only) using glm() directly
+logit_null <- glm(Outcome ~ 1, family = binomial(link = "logit"), data = trainSet_LR)
+
+# Run the LRT
+anova(logit_full, logit_null, test = "LRT")
+```
+
+The likelihood ratio test shows a large and statistically significant reduction in deviance when moving from the null model to the full logistic regression model.
+
+#### McFadden
+
+```{r}
+library(DescTools)
+library(formattable)
+McFadden <- formattable::comma(PseudoR2(logit_full, "McFadden"), digits = 4)
+Nagel <- formattable::comma(PseudoR2(logit_full, "Nagel"), digits = 4)
+McFadden; Nagel;
+cat("AIC:", logit$finalModel$aic,"\n")
+```
+
+The McFadden R² of 0.3024 and Nagelkerke R² of 0.4462 indicate that the logistic regression model provides a moderate level of explanatory power, which is strong for a clinical classification problem. The AIC of 434.10 reflects a reasonably good model fit.
+
+### Performance Metrics at Default Cutoff
+
+```{r}
+LR_predclass <- predict(logit, newdata = testSet_LR)
+
+# Confusion matrix for default cutoff
+LR_CM <- caret::confusionMatrix(LR_predclass, testSet_LR$Outcome, positive = "1")
+print(LR_CM)
+
+# Precision, Recall, and F1 Score
+LR_precdef <- unname(LR_CM$byClass['Pos Pred Value'])
+LR_recdef <- unname(LR_CM$byClass['Sensitivity'])
+LR_F1score <- 2 * ((LR_precdef * LR_recdef) / (LR_precdef + LR_recdef))
+
+cat("F1 Score (Default Cutoff):", LR_F1score, "\n")
+```
+
+The logistic model achieves an accuracy of 75.6%. Specificity is strong (86.0%), meaning the model correctly identifies most non-diabetic patients. However, sensitivity is lower (56.1%), indicating that the model misses some diabetic cases at the default cutoff. Precision (68.2%) and a balanced accuracy of 71.0% show that performance is reasonable across both classes, though the model is more conservative in predicting diabetes. 
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+LR_pred_prob <- predict(logit, newdata = testSet_LR, type = "prob")[, 2]
+
+
+LR_Roc <- pROC::roc(as.numeric(testSet_LR$Outcome), LR_pred_prob)
+LR_opt_cutoff <- coords(LR_Roc, "best", ret = "threshold")
+
+
+LR_opt_threshval <- as.numeric(LR_opt_cutoff["threshold"])
+cat("Optimal Cutoff (LR):", LR_opt_threshval, "\n")
+
+
+LR_opt_predclass <- ifelse(LR_pred_prob >= LR_opt_threshval, "1", "0")
+
+
+LR_opt_CM <- caret::confusionMatrix(as.factor(LR_opt_predclass), testSet_LR$Outcome, positive = "1")
+print(LR_opt_CM )
+
+# Precision, Recall, and F1 Score at optimal cutoff
+OptLR_precision <- unname(LR_opt_CM$byClass['Pos Pred Value'])
+LR_opt_recall <- unname(LR_opt_CM$byClass['Sensitivity'])
+LR_opt_F1_score <- 2 * ((OptLR_precision * LR_opt_recall) / (OptLR_precision + LR_opt_recall))
+
+cat("F1 Score (Optimal Cutoff):", LR_opt_F1_score, "\n")
+```
+
+Lowering the cutoff to 0.229 substantially improves the model’s ability to detect diabetic patients. Sensitivity increases to 86.9%, meaning the model identifies nearly nine out of ten true diabetes cases—an important improvement for early detection. Specificity decreases to 61.5%, reflecting more false positives, which is expected when prioritizing sensitivity.
+
+Although overall accuracy drops slightly to 70.4%, the F1 score improves to 0.671, indicating a better balance between precision and recall
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+# Cumulative gains
+LR_act_numeric <- as.numeric(as.character(testSet_LR$Outcome))
+LR_gns <- gains(LR_act_numeric, LR_pred_prob)
+
+LR_gns_plt <- ggplot() +
+  geom_line(aes(x = c(0, LR_gns$cume.obs), y = c(0, LR_gns$cume.pct.of.total * sum(LR_act_numeric))),
+            color = "blue") +
+  geom_line(aes(x = c(0, dim(testSet_LR)[1]), y = c(0, sum(LR_act_numeric))),
+            color = "red", linetype = "dashed") +
+  labs(x = "# of Cases", y = "Cumulative", title = "Cumulative Gains Chart (LR)") +
+  theme_minimal()
+
+# ROC curve with AUC for Logistic Regression
+roc_object_LR <- pROC::roc(testSet_LR$Outcome, LR_pred_prob)
+
+auc_LR <- auc(roc_object_LR)
+
+roc_plot_LR <- ggroc(roc_object_LR) +
+  geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1), linetype = "dashed", color = "red") + 
+  labs(x = "1 - Specificity", y = "Sensitivity", title = "ROC Curve for Logistic Regression") +
+  annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_LR, 4)), size = 5, color = "blue") + 
+  theme_minimal()
+
+grid.arrange(LR_gns_plt, roc_plot_LR, ncol = 2)
+```
+
+The AUC of 0.8183. An AUC above 0.80 indicates that the model reliably distinguishes between diabetic and non-diabetic patients across a range of thresholds. This performance reinforces that logistic regression is an effective classifier for this dataset and maintains good predictive stability.
+
+## MODEL 2: CLASSIFICATION TREE
+
+#### Partition 60/40 and check proportions
+
+```{r}
+library(dplyr)
+set.seed(1)
+
+# Data partition for CART model
+Crt_index <- createDataPartition(diabetes_data$Outcome, p = 0.6, list = FALSE)
+train_crt <- diabetes_data[Crt_index, ]
+testSet_crt <- diabetes_data[-Crt_index, ]
+
+cat("Full Dataset:\n")
+print(prop.table(table(diabetes_data$Outcome)))
+
+cat("\nTrain Dataset:\n")
+print(prop.table(table(train_crt $Outcome)))
+
+cat("\nTest Dataset:\n")
+print(prop.table(table(testSet_crt$Outcome)))  
+```
+
+### Set control for 10-fold cross validation
+
+```{r}
+myCtrl_cart <- trainControl(method="cv", number=10) 
+```
+
+### Compute class weights for imbalanced data
+
+```{r}
+class_counts <- table(train_crt$Outcome)
+wts <- ifelse(train_crt$Outcome == 0,
+              (0.5 * sum(class_counts)) / class_counts[1],
+              (0.5 * sum(class_counts)) / class_counts[2])
+```
+
+### CART Model
+
+#### Unweighted Full Tree
+
+```{r}
+library(rpart)
+library(rpart.plot)
+set.seed(1)
+
+full_tree <- rpart(as.factor(Outcome) ~ ., 
+                   data = train_crt,
+                   method = "class",
+                   control = rpart.control(minsplit = 1, minbucket = 1, cp = 0, maxdepth = 30)) # full tree
+
+cat("Unweighted Full Tree cp Table\n")
+print(full_tree$cptable, digits = 3)
+
+cat("\nUnweighted Variable Importance\n")
+print(caret::varImp(full_tree))
+
+
+library(rpart.plot)
+prp(full_tree, 
+    type = 1,          
+    extra = 1,            
+    under = TRUE)         
+```
+
+The unweighted full CART model grows a very large tree because we set cp = 0 and minimal split constraints. This produces a highly flexible model that fits the training data closely but is at risk of overfitting.\
+
+### Prune the tree: Unweighted Best Pruned Tree
+
+```{r}
+set.seed(1)
+
+bp_tree <- train(as.factor(Outcome) ~ ., 
+                 data = train_crt,
+                 method = "rpart",
+                 trControl = myCtrl_cart,
+                 tuneGrid = NULL)
+
+cat("Unweighted Best Pruned Tree cp Table\n")
+bp_tree$finalModel$cptable
+
+cat("\nUnweighted Variable Importance\n")
+vi <- caret::varImp(bp_tree)
+print(vi)
+
+cat("\nTREE DIAGRAM WITH NODE COUNTS\n")
+prp(bp_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+
+cat("\nTREE DIAGRAM SHOWING PROBABILTIES AND NODE PROPORTION\n")
+prp(bp_tree$finalModel, type = 1, extra = 104, under = TRUE, digits=3)
+```
+
+The pruned tree first splits on Glucose = 128. Patients with glucose below 128 are mostly predicted as non-diabetic. Among patients with higher glucose, the tree then uses BMI = 28: those with high glucose but lower BMI are still classified as non-diabetic, while those with both high glucose and high BMI are classified as diabetic. This structure highlights that diabetes risk is concentrated among patients who are simultaneously high in glucose and BMI.\
+
+Variable importance shows that Glucose is the dominant predictor in the CART model, with BMI and Age also contributing but to a lesser extent. BloodPressure has no importance in the final pruned tree.\
+
+### Weighted Best Pruned Tree
+
+```{r}
+set.seed(1)
+w_bp_tree <- train(as.factor(Outcome) ~.,  data = train_crt,
+							  	 method = "rpart",     
+							  	 trControl = myCtrl_cart,
+							  	 tuneGrid = NULL,
+									 weights = wts)  # <-- simply add the weights
+
+cat("Weighted Best Pruned Tree cp Table\n")
+w_bp_tree$finalModel$cptable
+
+cat("\nWeighted Variable Importance\n")
+print(caret::varImp(w_bp_tree))
+
+cat("\nTREE DIAGRAM WITH NODE COUNTS\n")
+prp(w_bp_tree$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+cat("\nTREE DIAGRAM SHOWING PROBABILTIES AND NODE PROPORTION\n")
+prp(w_bp_tree$finalModel, type = 1, extra = 104, under = TRUE, digits=3)
+
+
+wb_predicted_class <- predict(w_bp_tree, testSet_crt, type = "raw")    
+wb_CM <- caret::confusionMatrix(wb_predicted_class, as.factor(testSet_crt$Outcome), positive = "1")
+```
+
+The weighted tree is deeper and uses more variables than the unweighted version. It still splits first on Glucose, confirming it as the most influential predictor. However, after adjusting for imbalance, the model adds additional layers involving Age, BMI, Glucose thresholds, Insulin, and Diabetes Pedigree Function.
+
+### Performance Metrics at Default Cutoff
+
+### Confusion Matrix Unweighted Tree
+
+```{r}
+ub_predicted_class <- predict(bp_tree, testSet_crt, type = "raw")    
+ub_CM <- caret::confusionMatrix(ub_predicted_class, 
+                                as.factor(testSet_crt$Outcome), positive = "1")
+
+cat("\n CM UNWEIGHTED TREE AT DEFAULT CUTOFF VALUE\n")
+ub_CM
+
+ub_F1 <- with(as.list(ub_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", ub_F1, "\n")
+```
+
+The unweighted tree achieves an accuracy of 71.99%, which is significantly higher than the no-information rate (65.15%, p = .006). The model shows high specificity (80.5%), meaning it correctly identifies most non-diabetic patients. However, sensitivity is lower (56.1%), indicating that the model misses a substantial portion of diabetic cases.\
+
+Precision for the positive class is 60.6%, and the F1 score of 0.58. The balanced accuracy of 68.3% highlights that performance is stronger for predicting non-diabetic cases than diabetic ones.
+
+### Confusion Matrix Weighted Tree
+
+```{r}
+cat("\n CM WEIGHTED TREE AT DEFAULT CUTOFF VALUE\n")
+wb_CM
+
+wb_F1 <- with(as.list(wb_CM$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", wb_F1, "\n")
+```
+
+The weighted CART model achieves 74.3% accuracy. Weighting the diabetic class substantially increases sensitivity to 83.2%, meaning the model correctly identifies most diabetic patients but specificity decreases to 69.5%
+
+The negative predictive value is high (88.5%), indicating the model is very reliable when predicting a patient is non-diabetic. Precision for the positive class is 59.3%, and the F1 score improves to 0.693.
+
+Overall, the weighted model provides significantly better detection of diabetic cases, making it more suitable.
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+pred_prob_WB <- predict(w_bp_tree, testSet_crt, type = "prob")
+
+ROC_WB <- pROC::roc(as.numeric(testSet_crt$Outcome), pred_prob_WB[, 2])
+opt_cut_WB <- coords(ROC_WB, "best", ret = "threshold")
+cat("Optimal Cutoff (Weighted):", opt_cut_WB$threshold, "\n")
+
+pred_class_opt_WB <- ifelse(pred_prob_WB[, 2] >= opt_cut_WB$threshold, 1, 0)
+
+CM_opt_WB <- confusionMatrix(as.factor(pred_class_opt_WB),
+as.factor(testSet_crt$Outcome),
+positive = "1")
+print(CM_opt_WB)
+
+prec_WB <- unname(CM_opt_WB$byClass['Pos Pred Value'])
+recall_WB <- unname(CM_opt_WB$byClass['Sensitivity'])
+F1_WB <- 2 * ((prec_WB * recall_WB) / (prec_WB + recall_WB))
+cat("F1 Score (Weighted, Optimal Cutoff):", F1_WB, "\n")
+```
+
+The ROC-based optimal cutoff for the weighted tree is 0.508, which is very close to the default 0.50. Because the optimal threshold is nearly identical, the performance metrics remain the same as the default-cutoff results.
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(pROC)
+library(gains)
+
+# Convert Outcome to numeric for plotting
+CT_act_numeric <- as.numeric(as.character(testSet_crt$Outcome))
+
+# Predict probabilities from weighted CART
+pred_prob_CT <- predict(w_bp_tree, testSet_crt, type = "prob")[,2]
+
+# Cumulative Gains Chart
+CT_gains <- gains(CT_act_numeric, pred_prob_CT)
+
+CT_gains_plt <- ggplot() +
+geom_line(aes(x = c(0, CT_gains$cume.obs),
+y = c(0, CT_gains$cume.pct.of.total * sum(CT_act_numeric))),
+color = "blue") +
+geom_line(aes(x = c(0, nrow(testSet_crt)), y = c(0, sum(CT_act_numeric))),
+color = "red", linetype = "dashed") +
+labs(x = "# of Cases", y = "Cumulative",
+title = "Cumulative Gains Chart (Weighted CART)") +
+theme_minimal()
+
+# ROC Curve with AUC
+roc_object_CT <- roc(CT_act_numeric, pred_prob_CT)
+auc_CT <- auc(roc_object_CT)
+
+roc_plot_CT <- ggroc(roc_object_CT) +
+geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1),
+linetype = "dashed", color = "red") +
+labs(x = "1 - Specificity", y = "Sensitivity",
+title = "ROC Curve (Weighted CART)") +
+annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_CT, 4)),
+size = 5, color = "blue") +
+theme_minimal()
+
+# Display side-by-side
+grid.arrange(CT_gains_plt, roc_plot_CT, ncol = 2)
+```
+
+The ROC curve lies well above the diagonal, with an AUC of about 0.78, which indicates moderate to strong discriminative ability. In practical terms, this means the weighted tree can reasonably distinguish between diabetic and non-diabetic patients across a range of thresholds, although it still performs slightly worse than the logistic regression model (AUC ≈ 0.81).
+
+## MODEL 3: KNN
+
+#### Partition 60/40 and check proportions
+
+```{r}
+set.seed(1)
+myIndex<- createDataPartition(diabetes_data$Outcome, p=0.6, list=FALSE)
+trainSet_scaled <- diabetes_data[myIndex,]
+testSet_scaled  <- diabetes_data[-myIndex,]
+
+# check proportions are relevant
+cat("Full Dataset");    prop.table(table(diabetes_data$Outcome))
+cat("\nTrain Dataset"); prop.table(table(trainSet_scaled$Outcome))
+cat("\nTest Dataset");  prop.table(table(testSet_scaled$Outcome))
+```
+
+### KNN Model
+
+```{r}
+myCtrl <- trainControl(method = "cv", number = 10 )
+myGrid <- expand.grid(.k=c(1:10))
+set.seed(1)
+KNN_fit <- train(Outcome ~. , 
+								 trainSet_scaled, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit
+```
+
+Accuracy increases as k becomes larger, indicating that smoother decision boundaries perform better than very local ones. The best performance occurs at k = 7, which achieves the highest cross-validated accuracy (≈ 0.742) and the strongest agreement with the true classes (Kappa ≈ 0.42).
+
+This suggests that a moderate level of smoothing provides the most reliable predictions for this dataset. Smaller k values (e.g., k = 1–3) overfit the training data, while larger k values begin to add bias. Overall, k = 7 offers the best balance between noise reduction and class separation
+
+### Performance Metrics at Default Cutoff
+
+```{r}
+predicted_class <- predict(KNN_fit, testSet_scaled, type = "raw")    
+CM <- caret::confusionMatrix(predicted_class, testSet_scaled$Outcome, positive = "1")  
+CM
+precision <- unname(CM$byClass['Pos Pred Value']) 
+recall    <- unname(CM$byClass['Sensitivity'])  
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score, "\n")
+```
+
+The KNN model (k = 7) achieves 71.0% accuracy, which is significantly better than the no-information rate (p = .017). The model shows moderate specificity (79.0%), correctly identifying most non-diabetic patients, while sensitivity is lower (56.1%), meaning it misses a substantial portion of diabetic cases.
+
+Precision for the positive class is 58.8%, and the F1 score of 0.57 indicates a modest balance between precision and recall. The balanced accuracy of 67.5% confirms that KNN performs better on the majority class (non-diabetic) than on the minority class.
+
+### Performance Metrics at Threshold-Tuned Cutoff
+
+```{r}
+predicted_prob <- as.data.frame(predict(KNN_fit, testSet_scaled, type = "prob"))
+roc_curve <- pROC::roc(as.numeric(testSet_scaled$Outcome), predicted_prob[,2])
+optimal_cutoff <- coords(roc_curve, "best", ret = "threshold") #best uses Youden 
+cat("Optimal Cutoff"); optimal_cutoff
+
+predicted_class_opt <- ifelse(predicted_prob[,2] >= optimal_cutoff$threshold, 1, 0)
+
+cat("CONFUSION MATRIX AT OPTIMAL CUTOFF VALUE OF:", optimal_cutoff$threshold,"\n\n")
+CM_opt_KNN <- confusionMatrix(as.factor(predicted_class_opt), as.factor(testSet_scaled$Outcome), positive = '1')
+CM_opt_KNN
+precision <- unname(CM_opt_KNN$byClass['Pos Pred Value']) # synonyms
+recall    <- unname(CM_opt_KNN$byClass['Sensitivity'])   # synonyms
+f1_score_KNN <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_score_KNN, "\n")
+```
+
+The ROC analysis produced an optimal cutoff of 0.536, which is nearly identical to the default 0.50 threshold. Because of this, the predicted classifications and all performance metrics remain unchanged. This indicates that the KNN model already operates near its optimal decision boundary, and additional threshold tuning does not improve sensitivity, specificity, or F1 performance.\
+
+### Gains Chart and ROC Curve with AUC
+
+```{r}
+
+testSet_scaled$Outcome <- as.numeric(as.character(testSet_scaled$Outcome))
+
+gains_table <- gains(testSet_scaled$Outcome, predicted_prob[,2])
+
+gains_plot <- ggplot() +
+  geom_line(aes(x = c(0, gains_table$cume.obs), y = c(0, gains_table$cume.pct.of.total * sum(testSet_scaled$Outcome))),
+            color = "blue") +
+  geom_line(aes(x = c(0, dim(testSet_scaled)[1]), y = c(0, sum(testSet_scaled$Outcome))),
+            color = "red", linetype = "dashed") +
+  labs(x = "# of cases", y = "Cumulative", title = "Cumulative Gains Chart") +
+  theme_minimal()
+
+roc_object <- pROC::roc(testSet_scaled$Outcome, predicted_prob[,2])
+
+auc_knn <- auc(roc_object)
+
+roc_plot <- ggroc(roc_object) +
+   geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1), linetype = "dashed", color = "red") + 
+  labs(x = "1 - Specificity", y = "Sensitivity", title = "ROC Curve") +
+	annotate("text", x = 0.5, y = 0.05, label = paste("AUC =", round(auc_knn, 4)), size = 5, color = "blue") + 
+  theme_minimal()
+
+grid.arrange(gains_plot, roc_plot, ncol = 2)
+```
+
+The cumulative gains chart shows that the KNN model captures a higher proportion of diabetic patients than random selection, especially among the top-ranked cases, indicating useful lift for targeting higher-risk patients. However, the curve is less steep than for logistic regression, suggesting weaker early lift.
+
+The ROC curve has an AUC of 0.7496, which indicates moderate discriminative ability—better than random guessing, but not as strong as the logistic regression model (AUC ≈ 0.81) and slightly above the weighted CART model (AUC ≈ 0.78).
+
+## MODEL 3: ENSEMBLE METHOD
+
+#### Partition 60/40 and check proportions
+
+```{r}
+library(randomForest)
+
+set.seed(1)
+rf_index <- createDataPartition(diabetes_data$Outcome, p = 0.6, list = FALSE)
+train_rf <- diabetes_data[rf_index, ]
+test_rf  <- diabetes_data[-rf_index, ]
+
+cat("Full Dataset");    prop.table(table(diabetes_data$Outcome))
+cat("\nTrain Dataset"); prop.table(table(train_rf$Outcome))
+cat("\nTest Dataset");  prop.table(table(test_rf$Outcome))
+```
+
+```{r}
+# Create a factor with valid class names for RF only
+train_rf$Outcome_RF <- ifelse(train_rf$Outcome == 1 | train_rf$Outcome == "1", "Yes", "No")
+test_rf$Outcome_RF  <- ifelse(test_rf$Outcome  == 1 | test_rf$Outcome  == "1", "Yes", "No")
+
+train_rf$Outcome_RF <- factor(train_rf$Outcome_RF, levels = c("No", "Yes"))
+test_rf$Outcome_RF  <- factor(test_rf$Outcome_RF,  levels = c("No", "Yes"))
+
+```
+
+### Train Random Forest
+
+```{r}
+rf_ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+
+set.seed(1)
+rf_fit <- train(
+  Outcome_RF ~ . - Outcome,
+  data      = train_rf,
+  method    = "rf",
+  trControl = rf_ctrl,
+  tuneLength = 5,
+  importance = TRUE
+)
+
+rf_fit
+```
+
+Across all cross-validation folds, the model achieved its highest accuracy (78.3%) when mtry = 2. This indicates that allowing each tree to consider only two predictors at a time produced the most stable and accurate ensemble. All other mtry values resulted in slightly lower accuracy.\
+
+Selecting the model with mtry = 2 helps reduce overfitting and improves generalization by increasing randomness in the trees.
+
+### Variable Importance
+
+```{r}
+rf_varimp <- varImp(rf_fit)
+rf_varimp
+```
+
+### Performance at default cutoff
+
+```{r}
+# Class predictions at default 0.5 cutoff
+rf_pred_class <- predict(rf_fit, newdata = test_rf)
+
+rf_CM <- confusionMatrix(rf_pred_class, test_rf$Outcome_RF, positive = "Yes")
+rf_CM
+
+# Precision, recall, F1
+rf_precision <- unname(rf_CM$byClass["Pos Pred Value"])
+rf_recall    <- unname(rf_CM$byClass["Sensitivity"])
+rf_F1        <- 2 * ((rf_precision * rf_recall) / (rf_precision + rf_recall))
+
+cat("F1 Score (RF, Default Cutoff):", rf_F1, "\n")
+
+```
+
+The Random Forest model correctly predicts diabetes status 74.3% of the time, which is better than simply guessing the majority class. It is very good at identifying non-diabetic patients (specificity 82%) and correctly finds about 60% of diabetic patients (sensitivity 59.8%).
+
+When the model predicts diabetes, it is correct 64% of the time, and when it predicts no diabetes, it is correct 79% of the time. The F1 score (0.62) shows a solid balance between precision and recall. Overall, Random Forest performs better than the single decision tree and is one of the stronger models in this analysis.
+
+### Threshold-tuned cutoff using ROC
+
+```{r}
+# Probabilities for positive class "Yes"
+rf_pred_prob <- predict(rf_fit, newdata = test_rf, type = "prob")[, "Yes"]
+
+# ROC and optimal cutoff (Youden index)
+rf_roc        <- pROC::roc(test_rf$Outcome_RF, rf_pred_prob)
+rf_opt_cutoff <- coords(rf_roc, "best", ret = "threshold")
+rf_opt_cutoff
+
+rf_opt_thresh <- as.numeric(rf_opt_cutoff["threshold"])
+cat("Optimal Cutoff (RF):", rf_opt_thresh, "\n")
+
+# Reclassify using optimal cutoff
+rf_opt_class <- ifelse(rf_pred_prob >= rf_opt_thresh, "Yes", "No")
+
+rf_opt_CM <- confusionMatrix(as.factor(rf_opt_class), test_rf$Outcome_RF, positive = "Yes")
+rf_opt_CM
+
+rf_opt_precision <- unname(rf_opt_CM$byClass["Pos Pred Value"])
+rf_opt_recall    <- unname(rf_opt_CM$byClass["Sensitivity"])
+rf_opt_F1        <- 2 * ((rf_opt_precision * rf_opt_recall) / (rf_opt_precision + rf_opt_recall))
+
+cat("F1 Score (RF, Optimal Cutoff):", rf_opt_F1, "\n")
+
+
+```
+
+Using the ROC curve, the best cutoff was 0.345. With this cutoff, the model finds more diabetic patients, increasing sensitivity to 78.5%, while still keeping good specificity (72.5%). Accuracy stays about the same at 74.6%.
+
+The F1 score improves to 0.68, meaning the model balances false positives and false negatives better than before. Overall, tuning the cutoff makes the Random Forest better at detecting diabetes.
+
+### Gains chart and ROC curve with AUC
+
+```{r}
+# Cumulative gains
+rf_act_numeric <- ifelse(test_rf$Outcome_RF == "Yes", 1, 0)
+rf_gains <- gains(rf_act_numeric, rf_pred_prob)
+
+rf_gains_plot <- ggplot() +
+  geom_line(aes(x = c(0, rf_gains$cume.obs),
+                y = c(0, rf_gains$cume.pct.of.total * sum(rf_act_numeric)))) +
+  geom_line(aes(x = c(0, nrow(test_rf)),
+                y = c(0, sum(rf_act_numeric))),
+            linetype = "dashed") +
+  labs(x = "# of Cases", y = "Cumulative",
+       title = "Cumulative Gains Chart (Random Forest)") +
+  theme_minimal()
+
+# ROC + AUC
+rf_auc <- auc(rf_roc)
+
+rf_roc_plot <- ggroc(rf_roc) +
+  geom_segment(aes(x = 1, y = 0, xend = 0, yend = 1),
+               linetype = "dashed") +
+  labs(x = "1 - Specificity", y = "Sensitivity",
+       title = "ROC Curve (Random Forest)") +
+  annotate("text", x = 0.5, y = 0.05,
+           label = paste("AUC =", round(rf_auc, 4)),
+           size = 5) +
+  theme_minimal()
+
+grid.arrange(rf_gains_plot, rf_roc_plot, ncol = 2)
+
+```
+
+The cumulative gains chart shows that Random Forest finds far more diabetes cases in the top-ranked cases than random guessing. The ROC curve has an AUC of 0.8075, which indicates strong ability to separate diabetic and non-diabetic patients, confirming Random Forest as one of the best-performing classifiers in the analysis.
+
+# EVALUATION
+
+## COMPARISON ACROSS MODELS
+
+```{r}
+#| include: false
+library(DALEX)
+library(gridExtra)
+library(ggplot2)
+
+# KNN
+explainer_knn <- DALEX::explain(
+  model = KNN_fit,
+  data  = testSet_scaled[ , names(testSet_scaled) != "Outcome"],
+  y     = as.numeric(as.character(testSet_scaled$Outcome)),
+  label = "KNN"
+)
+
+# Logistic Regression
+explainer_glm <- DALEX::explain(
+  model = logit,
+  data  = testSet_LR[ , names(testSet_LR) != "Outcome"],
+  y     = as.numeric(as.character(testSet_LR$Outcome)),
+  label = "Logistic Regression"
+)
+
+# CART (Weighted Pruned Tree)
+explainer_cart <- DALEX::explain(
+  model = w_bp_tree,
+  data  = testSet_crt[ , names(testSet_crt) != "Outcome"],
+  y     = as.numeric(as.character(testSet_crt$Outcome)),
+  label = "CART (Weighted)"
+)
+
+# Random Forest
+explainer_rf <- DALEX::explain(
+  model = rf_fit,
+  data  = test_rf[ , names(test_rf) != "Outcome_RF"],
+  y     = as.numeric(test_rf$Outcome_RF == "Yes"),
+  label = "Random Forest"
+)
+
+
+```
+
+### Variable Importance
+
+```{r}
+p_glm  <- model_parts(explainer_glm)  %>% plot(show_boxplots = FALSE) + ggtitle("Importance: Logistic Regression")
+p_cart <- model_parts(explainer_cart) %>% plot(show_boxplots = FALSE) + ggtitle("Importance: CART (Weighted)")
+p_knn  <- model_parts(explainer_knn)  %>% plot(show_boxplots = FALSE) + ggtitle("Importance: KNN")
+p_rf   <- model_parts(explainer_rf)   %>% plot(show_boxplots = FALSE) + ggtitle("Importance: Random Forest")
+
+grid.arrange(p_glm, p_cart, p_knn, p_rf, nrow = 2)
+
+```
+
+Across all four models—Logistic Regression, CART (Weighted), KNN, and Random Forest—the variable importance results show a consistent pattern: Glucose is the strongest predictor of diabetes.
+
+**Logistic Regression** Logistic Regression identifies Glucose as the most influential predictor, followed by BMI and Pregnancies. These variables have the largest effect on the model’s predicted probability of diabetes. Other variables, such as BloodPressure and SkinThickness, contribute minimally to improving model accuracy.
+
+**CART (Weighted)** The CART model also places the most importance on Glucose, which appears in the top splits of the decision tree. BMI\*\*, Age, and Insulin play secondary roles in determining branch splits. Variables such as BloodPressure and DiabetesPedigreeFunction have very low importance, indicating limited influence on the tree’s decisions.
+
+**KNN** For the KNN model, Glucose again ranks highest. Insulin, Age, and BMI also contribute meaningfully. Because KNN bases predictions on similarity between patients, glucose values heavily influence which neighbors are considered “closest.”
+
+**Random Forest** Random Forest confirms the same pattern: Glucose is the most important variable, followed by BMI, Age, and DiabetesPedigreeFunction. Since Random Forest aggregates many decision trees, variables that consistently appear in tree splits receive higher importance scores.
+
+**Overall Interpretation:**
+
+These results provide strong evidence that besides glucose levels, factors such as BMI and age also play meaningful roles in predicting diabetes, while variables like SkinThickness, BloodPressure, and DiabetesPedigreeFunction contribute very little across all models.The agreement across models increases confidence that the key predictors reflect true relationships in the data.
+
+### Residuals
+
+```{r, warning=FALSE, message=FALSE}
+p1 <- explainer_glm  %>%
+  model_diagnostics() %>%
+  plot(variable = "ids", yvariable = "residuals", smooth = FALSE)
+
+p2 <- explainer_cart %>%
+  model_diagnostics() %>%
+  plot(variable = "ids", yvariable = "residuals", smooth = FALSE)
+
+p3 <- explainer_knn  %>%
+  model_diagnostics() %>%
+  plot(variable = "ids", yvariable = "residuals", smooth = FALSE)
+
+p4 <- explainer_rf   %>%
+  model_diagnostics() %>%
+  plot(variable = "ids", yvariable = "residuals", smooth = FALSE)
+
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+The residual plots help evaluate how well each model fits the data by showing how far each prediction is from the true outcome.
+
+**Logistic Regression** The residuals for Logistic Regression are scattered fairly evenly around zero, which suggests no major pattern or bias in the model’s errors.
+
+**CART (Weighted)** The CART residuals cluster tightly near zero with a few larger spikes, showing that most predictions are close to correct but occasional cases are misclassified more strongly.
+
+**KNN** The KNN residuals are more spread out compared to the other models, indicating more variability in prediction errors.
+
+**Random Forest** Random Forest residuals remain mostly centered around zero with moderate scatter, meaning errors are generally balanced and not systematically biased. Overall the model maintains consistent prediction performance.
+
+### Performance Metrics
+
+#### Table of Threshold-Tuned Metrics
+
+```{r}
+KNN_metrics <- c(
+  Accuracy = unname(CM_opt_KNN$overall['Accuracy']),
+  Sensitivity = unname(CM_opt_KNN$byClass['Sensitivity']),
+  Specificity = unname(CM_opt_KNN$byClass['Specificity']),
+  F1_Score = f1_score_KNN,
+  AUC = auc_knn
+)
+
+LR_metrics <- c(
+  Accuracy = unname(LR_opt_CM$overall['Accuracy']),
+  Sensitivity = unname(LR_opt_CM$byClass['Sensitivity']),
+  Specificity = unname(LR_opt_CM$byClass['Specificity']),
+  F1_Score = LR_opt_F1_score,
+  AUC = auc_LR
+)
+
+CART_metrics <- c(
+  Accuracy = unname(CM_opt_WB$overall['Accuracy']),
+  Sensitivity = unname(CM_opt_WB$byClass['Sensitivity']),
+  Specificity = unname(CM_opt_WB$byClass['Specificity']),
+  F1_Score = F1_WB,
+  AUC = auc_CT
+)
+
+RF_metrics <- c(
+  Accuracy = unname(rf_opt_CM$overall['Accuracy']),
+  Sensitivity = unname(rf_opt_CM$byClass['Sensitivity']),
+  Specificity = unname(rf_opt_CM$byClass['Specificity']),
+  F1_Score = rf_opt_F1,
+  AUC = as.numeric(rf_auc)
+)
+
+model_metrics <- data.frame(
+  Model = c("Logistic Regression", "CART (Weighted)", "KNN", "Random Forest"),
+  Accuracy = c(LR_metrics['Accuracy'], CART_metrics['Accuracy'], KNN_metrics['Accuracy'], RF_metrics['Accuracy']),
+  Sensitivity = c(LR_metrics['Sensitivity'], CART_metrics['Sensitivity'], KNN_metrics['Sensitivity'], RF_metrics['Sensitivity']),
+  Specificity = c(LR_metrics['Specificity'], CART_metrics['Specificity'], KNN_metrics['Specificity'], RF_metrics['Specificity']),
+  AUC = c(LR_metrics['AUC'], CART_metrics['AUC'], KNN_metrics['AUC'], RF_metrics['AUC']),
+  F1_Score = c(LR_metrics['F1_Score'], CART_metrics['F1_Score'], KNN_metrics['F1_Score'], RF_metrics['F1_Score'])
+)
+
+print(model_metrics)
+
+
+```
+
+**Logistic Regression** Logistic Regression shows strong sensitivity (87%), meaning it identifies most diabetic patients correctly. Its accuracy (70%) and AUC (0.818) indicate a reliable, well-balanced model. Although its specificity is lower (62%), it still performs consistently across metrics and avoids extreme tradeoffs.
+
+**CART (Weighted)** The weighted CART model provides a good balance between sensitivity (83%) and specificity (69%). Its accuracy (74%) is strong, and it achieves the highest F1-score (0.693), meaning it balances precision and recall better than the other models. CART is especially good at reducing false positives while still catching most positive cases.
+
+**KNN** KNN performs moderately with 71% accuracy. It has high specificity (79%), meaning it rarely mislabels healthy patients as diabetic. However, its sensitivity is low (56%), so it misses many true diabetic cases. Its lower F1-score (0.574) and AUC (0.75) show that it is not as reliable as the other models for medical screening.
+
+**Random Forest** Random Forest performs very well overall, with strong accuracy (75%), balanced sensitivity (79%), and specificity (72%). Its AUC (0.808) shows solid predictive ability, and the F1-score (0.683) is the second-highest among all models. It is a strong candidate when both accuracy and stability across metrics are important.
+
+#### Bar Chart Comparing All Metrics Across Models
+
+```{r}
+#### Bar Chart Comparing All Metrics Across Models
+
+model_metrics_long <- model_metrics %>%
+  tidyr::pivot_longer(
+    cols = Accuracy:F1_Score,
+    names_to = "Metric",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Model = factor(Model,
+                   levels = c("Logistic Regression",
+                              "CART (Weighted)",
+                              "KNN",
+                              "Random Forest")),
+    Metric = factor(Metric,
+                    levels = c("Accuracy", "Sensitivity",
+                               "Specificity", "F1_Score", "AUC"))
+  )
+
+ggplot(model_metrics_long, aes(x = Model, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Metric, scales = "fixed") +
+  theme_minimal() +
+  labs(title = "Comparison of Performance Metrics Across All Models",
+       x = "", y = "") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("darkblue", "purple", "darkgreen", "orange"))
+
+```
+
+Logistic Regression has the highest sensitivity (≈0.87), meaning it detects the most true diabetic cases. This makes it the safest option for a screening tool intended to catch disease early.
+
+-   CART (Weighted) also performs well (≈0.83), missing fewer diabetic patients than the other nonlinear models.
+
+-   Random Forest has moderate sensitivity (≈0.79), performing better than KNN but still missing more cases than Logistic Regression or CART.
+
+-   KNN has the lowest sensitivity (≈0.56), meaning it misses almost half of diabetic patients—too risky for clinical decision-making.
+
+When considering specificity (correctly identifying non-diabetic patients), KNN and CART perform best. However, because false negatives (missed diabetics) are more dangerous than false positives, sensitivity takes priority. Overall, Logistic Regression provides the best balance while minimizing the clinical risk of incorrectly telling a patient they do not have diabetes.\
+
+# DEPLOYMENT
+
+## Summary of Findings
+
+### Research Questions
+
+**Which variables are most influential in predicting diabetes?**
+
+Across Logistic Regression, CART, Random Forest, and KNN, Glucose consistently had the highest importance. BMI, Age, and Pregnancies also contributed meaningfully. Other variables (SkinThickness, BloodPressure) were consistently less important.
+
+**How accurately can the models classify diabetic and non-diabetic patients?**
+
+The best-performing models achieved accuracy between 70–75% with AUC values between 0.75–0.82, showing good predictive ability. Sensitivity—the ability to correctly identify diabetic patients—varied across models, and is the most important metric for reducing clinical risk.
+
+-   Logistic Regression (tuned cutoff) had the highest sensitivity (≈ 0.87) and the strongest AUC (≈ 0.82).
+
+-   Random Forest also performed strongly with balanced sensitivity and specificity.
+
+-   KNN had the lowest sensitivity and is not recommended for screening.\
+
+### Conclusion of Recommended Model
+
+The recommended model is Logistic Regression with a tuned cutoff of approximately 0.23. This model gives the best balance between early detection and overall accuracy. Most importantly:
+
+-   It identifies nearly 87% of true diabetic cases.
+
+-   It maintains a reasonable rate of false positives.
+
+-   It provides the highest AUC, indicating strong discrimination overall.
+
+In a healthcare setting, missing a diabetic patient is riskier than incorrectly flagging one. Because of this, the high sensitivity of Logistic Regression makes it the safest option for deployment.
+
+### How the model should be used
+
+The model is intended to function as a clinical screening tool, helping staff identify patients who may be at elevated risk for diabetes before symptoms become severe. After the measurements that were identified as strong predictors, like Glucose, BMI, Age, Insulin, and Blood Pressure, are entered the model will automatically generate a risk classification score that categorizes the patient as either High Risk or Low Risk. Patients identified as High Risk should be prioritized for additional laboratory testing and receive early lifestyle and nutrition recommendations, and be placed on a schedule for more frequent medical follow-ups to prevent progression. It is important that clinical staff understand how to interpret the model’s risk output and follow standardized response procedures so that every patient receives consistent and appropriate care even before the official diagnostic.
+
+### Limitations
+
+Although the models perform well, there are several limitations that clients should keep in mind. The dataset includes only adult women from a specific population, which means the model may not work the same for other groups unless additional data is collected. Some medical values in the dataset were replaced with median estimates, which can reduce accuracy for certain patients and affect how follow-up resources are assigned. The tuned cutoff also increases sensitivity but produces more false positives, which may lead to higher testing costs and added workload for staff. Finally, the model does not include real-world business factors, such as patient follow through or appointment availability.For these reasons, the model should be used as a decision-support tool, combined with clinical judgment and updated regularly as more data becomes available.
+
+## Recommendations
+
+1.  **Use the model to prioritize follow-up testing and early intervention**
+
+    The model can help identify patients who should receive timely follow-up care such as glucose monitoring, or early lifestyle counseling. This allows clinics to focus resources on individuals with the highest predicted risk and improves the chances of detecting diabetes earlier in its progression.
+
+2.  **Ensure consistent measurement of key predictors**
+
+    Across all four models, Glucose, BMI, and Age were the strongest predictors so staff should proritizie and make sure to take record glucose and BMI accurately. Measurements should be checked for implausible values like zeros specifically for the stronger predictors.
+
+3.  **. Continue expanding and updating the dataset**
+
+    A broader dataset will help ensure the model performs reliably so organizations should use the model to collect new patient records during routine care. Also, including patients from more diverse demographic backgrounds making sure to keep training the model often to improve generalizability.
+
+4.  **Communicate that the model is not a replacement for clinical expertise**
+
+    Predictions of the model should be used to guide prioritization and identify patients who may need additional evaluation. Final decisions must still rely on diagnostic testing, medical history, and clinical assessment to ensure safe and accurate patient care.Model Recommendations
+
+## Business Recommendations
+
+1.  **Begin deployment in women’s health clinics or programs serving similar populations**
+
+    Because the dataset includes only adult female patients of Pima Indian heritage, the model is most reliable when used with women’s health clinics, community programs with a high proportion of female patients, or wellness campaigns targeting women. Deploying the model in these settings ensures predictions are applied to a group similar to the original training population, reducing bias and improving accuracy.
+
+2.  **Use model insights to reduce unnecessary testing costs**
+
+    High specificity models (such as **KNN at 79%** and **CART at 69%**) help correctly identify patients who *do not* need diabetes-related follow-up testing.\
+    Healthcare organizations can use this to avoid ordering costly lab tests for low-risk patients while at the same time allocate those resources to those most likely to benefit\
+    This supports cost-efficient operations without compromising quality of care.
+
+3.  **Develop targeted outreach and education campaigns for high-risk patient characteristics**
+
+    Because of strong relationship of **Age, BMI, and Glucose** with diabetes risk, clinics can create educational materials tailored to older adults and individuals with higher BMI. These campaigns can be deployed in community centers, wellness programs, and women’s health clinics, increasing patient engagement and reducing long-term disease burden.
+
+4.  **Measure financial impact over time by identifying risk early**
+
+    Because the models, especially Logistic Regression (AUC ≈ 0.818, sensitivity ≈ 0.87) and Random Forest (AUC ≈ 0.808, balanced sensitivity/specificity), provide reliable predictions of diabetes risk, clinics can use these probability scores to monitor how early identification influences long-term costs. If patients with high risk are identified earlier, they can recive timely interventions, reducing costly emergency visits, repeated diagnostic testing for undiagnosed patients and long-term complications that require intensive care.
+
+# References
+
+### Dataset
+
+National Institute of Diabetes and Digestive and Kidney Diseases. (1990). *Pima Indians Diabetes Database* \[Data set\].\
+UCI Machine Learning Repository. Retrieved from: https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database
+
+### R Version
+
+R Core Team. (2024). *R: A language and environment for statistical computing* (Version 4.5.1) \[Computer software\]. R Foundation for Statistical Computing. https://www.r-project.org/
+
+### R Packages
+
+Biecek, P., & Burzykowski, T. (2020). DALEX: Explainers for complex predictive models [R package]. https://CRAN.R-project.org/package=DALEX
+
+Bischl, B., Lang, M., Kotthoff, L., Schiffner, J., Richter, J., Studerus, E., … Casalicchio, G. (2017). mlr: Machine Learning in R [R package]. https://CRAN.R-project.org/package=mlr
+
+Boxerman, S. (2023). dlookr: Tools for Data Diagnosis, Exploration, Transformation [R package]. https://CRAN.R-project.org/package=dlookr
+
+Forkosh Baruch, A., & Young, D. (2018). formattable: Formattable Data Structures [R package]. https://CRAN.R-project.org/package=formattable
+
+Gan, F., & Xie, Y. (2023). flextable: Functions for Tabular Reporting [R package]. https://CRAN.R-project.org/package=flextable
+
+Kassambara, A. (2020). corrplot: Visualization of a Correlation Matrix [R package]. https://CRAN.R-project.org/package=corrplot
+
+Kuhn, M. (2024). caret: Classification and Regression Training (Version 7.0–1) [R package]. https://CRAN.R-project.org/package=caret
+
+Liaw, A., & Wiener, M. (2002). randomForest: Breiman and Cutler’s Random Forests for Classification and Regression (Version 4.7-1.2) [R package]. https://CRAN.R-project.org/package=randomForest
+
+Milborrow, S. (2023). rpart.plot: Plot ‘rpart’ Models [R package]. https://CRAN.R-project.org/package=rpart.plot
+
+OpenAI. (2025). ChatGPT (GPT-5.1 version) [Large language model]. https://chat.openai.com 
+(The model was used to assist with portions of code generation. All outputs were reviewed and finalized by the author.)
+
+Robin, X., Turck, N., Hainard, A., Tiberti, N., Lisacek, F., Sanchez, J., & Müller, M. (2011). pROC: Display and Analyze ROC Curves [R package]. https://CRAN.R-project.org/package=pROC
+
+Therneau, T., & Atkinson, B. (2019). rpart: Recursive Partitioning and Regression Trees [R package]. https://CRAN.R-project.org/package=rpart
+
+Todorov, V. (2022). DescTools: Tools for Descriptive Statistics [R package]. https://CRAN.R-project.org/package=DescTools
+
+Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., Francois, R., … Yutani, H. (2019). tidyverse: Easily install and load the tidyverse [R package]. https://CRAN.R-project.org/package=tidyverse
+
+Wickham, H., et al. (2024). ggplot2: Create Elegant Data Visualisations Using the Grammar of Graphics [R package]. https://CRAN.R-project.org/package=ggplot2
+
+Wickham, H., & Seidel, D. (2020). gains: Gain and Lift Charts [R package]. https://CRAN.R-project.org/package=gains
+
+Weihs, C., Hothorn, T., & Hornik, K. (2022). klaR: Classification and Visualization [R package]. https://CRAN.R-project.org/package=klaR
+
+Wickham, H., & Henry, L. (2023). DataExplorer: Fast Exploratory Data Analysis [R package]. https://CRAN.R-project.org/package=DataExplorer
+
+gridExtra Authors. (2022). gridExtra: Miscellaneous Functions for Grid Graphics [R package]. https://CRAN.R-project.org/package=gridExtra
