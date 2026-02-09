@@ -1,0 +1,1020 @@
+---
+title: "Final Prediction Report"
+subtitle: "Vehicle Dataset from CarDekho"
+author: "Gabriela Chajon"
+date: "12/10/2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  message: false
+  echo: false
+  include: true
+toc: true
+editor: source
+---
+
+```{r, libraries}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+
+library(tidyverse)
+library(DataExplorer)
+library(flextable)
+library(gridExtra)
+library(caret)
+library(gains)
+library(pROC)
+library(klaR)
+library(rpart)
+library(rpart.plot)
+```
+
+# Business Understanding
+
+With used-car sales in many countries surpassing new car sales, the automotive industry plays a vital role in the global economy and remains in an unshakable position. Accurately predicting used-car prices is beneficial for making wise decisions for various stakeholders, including consumers, car sellers, dealerships, and financial institutions that rely on proper valuation for loans and asset management.
+
+This project uses the **Used Car Dataset from CarDekho** containing detailed vehicle attributes. The objective is to develop regression-based models that predict the **selling price** of a used car based on these characteristics. Such models help dealerships and online marketplaces improve inventory valuation, reduce pricing errors, increase transparency for customers, and enhance confidence in pricing recommendations.
+
+## Research Questions
+
+1.  **Which vehicle attributes have the strongest influence on used-car selling price?**\
+    This examines which predictors—such as vehicle year, mileage, fuel type, transmission type, and number of previous owners—most significantly affect price.
+
+2.  **How accurately can predictive models estimate used-car prices using this dataset?**\
+    This evaluates the performance of linear regression and regression tree models using metrics such as RMSE, MAE, and R² to assess how well the models capture real-world pricing behavior.
+
+# Data Understanding
+
+### Previewing the Dataset
+
+```{r, loading dataset}
+cars_data <- read.csv("car details v4.csv", sep =",")
+head(cars_data)
+tail(cars_data)
+dim(cars_data)
+cars_data$Price <- as.numeric(cars_data$Price)
+```
+
+**Vehicle Identification & Market Context**
+
+-   Make and model describe the car’s brand and variant.
+
+-   Location reflects regional price differences.
+
+-   Seller type (individual, dealer, corporate) and the number of previous owners provide information about vehicle history and seller credibility.
+
+**Age, Usage, and Basic Attributes**
+
+-   Year indicates the car’s manufacturing age.
+
+-   Kilometer measures total vehicle usage.
+
+-   Fuel type, transmission, and color capture common buyer preferences.
+
+**Mechanical and Performance Features**
+
+-   Engine, maximum power, maximum torque, and drivetrain describe the vehicle’s mechanical performance and capabilities.
+
+**Physical Dimensions and Capacity**
+
+-   Length, width, height, seating capacity, and fuel tank capacity provide information about the vehicle’s size, comfort, and practicality.
+
+**Target Variable**
+
+-   Price is the continuous selling price of the vehicle in INR and serves as the prediction target.
+
+## Exploratory Data Anlaysis (EDA)
+
+### Data Summary
+
+```{r, data introduction}
+cars_data %>% head(5)
+cars_data %>% tail(5)
+cars_data %>% str()     		              
+cars_data %>% glimpse()			              
+cars_data %>% DataExplorer::introduce()		
+cars_data %>% DataExplorer::plot_intro()	
+DataExplorer::plot_missing(cars_data)
+```
+
+The dataset contains 2,059 observations and 20 variables describing used cars and their selling prices. There are 369 missing values spread across the dataset.
+
+The missing-value plot and table show that missing values are concentrated in a small subset of variables, mainly those related to vehicle dimensions and capacity (for example, length, width, height, and fuel tank capacity), as well as a few mechanical features.
+
+### Data proportions
+
+```{r}
+prop.table(table(cars_data$Fuel.Type))
+prop.table(table(cars_data$Transmission))
+prop.table(table(cars_data$Seller.Type))
+prop.table(table(cars_data$Owner))
+prop.table(table(cars_data$Drivetrain))
+```
+
+The categorical proportions show that the fleet is dominated by conventional fuel and ownership patterns. Roughly half of the cars are Diesel (about 51%) and just under half are Petrol (about 46%), while alternative fuels such as CNG, LPG, Hybrid, and Electric together account for only a few percent of the sample (each individual category generally below 3%). 
+
+-   **Manual transmissions** are slightly more common than automatics (about 55% vs. 45%). 
+
+-   Almost all vehicles are sold by **individuals** (about 97%), with only a small share listed by corporate or commercial sellers (together under 4%). 
+
+-   Most cars are **first-owner** vehicles (around 79%), followed by second-owner (about 18%), while third-owner, fourth-or-more, and unregistered cars each represent roughly 2% or less. 
+
+-   In terms of drivetrain, the majority of vehicles are **RWD** (around 65%), with FWD and AWD making up smaller portions of the dataset. These proportions indicate that the data are heavily concentrated in mainstream, individually owned Petrol and Diesel cars, which is consistent with a typical used-car market.\
+
+### Descriptive Statistics
+
+```{r, descrptive stats}
+summary(cars_data)
+```
+
+The descriptive statistics show that car prices are right-skewed, with the median far below the mean due to a small number of very high-priced vehicles. Most cars are relatively new, manufactured in the mid-2010s, and mileage varies widely, indicating potential outliers. Vehicle dimensions and seating capacity are fairly consistent with typical passenger cars, while a few variables, such as fuel tank capacity and some size measurements, contain missing values.
+
+### Histograms and Density Plots
+
+```{r, histograms}
+cars_data %>% plot_histogram()
+cars_data %>% plot_density()
+```
+
+The histograms and density plots show that most numeric variables in the dataset are not evenly spread out. Price is strongly right-skewed, meaning most cars are moderately priced while a few very expensive cars pull the tail upward.
+
+-   Kilometer has a similar pattern, with many cars in normal mileage ranges and a few with extremely high mileage. The size-related variables (Length, Width, Height) show multiple peaks, which likely reflect different types of cars (small cars, sedans, SUVs).
+
+-   Year is concentrated mostly between 2010 and 2020, meaning the dataset mainly contains newer vehicles. Fuel.Tank.Capacity and Seating.Capacity also form clear groups, showing differences between compact cars and larger vehicles. Overall, these plots suggest that several variables are skewed or have distinct clusters, which is normal in used-car data and something to consider when preparing the data for modeling.
+
+### Boxplots
+
+```{r,boxplots}
+cars_data %>% plot_boxplot(by = "Price")
+```
+
+The boxplots show several clear relationships with Price:
+
+-   **Kilometer:** Higher mileage is associated with lower prices, with a small number of very high-mileage outliers.\
+-   **Year:** Newer cars have higher and more consistent prices, while older vehicles show lower and more variable prices.\
+-   **Dimensions (Length, Width, Height) and Fuel Tank Capacity:** Larger vehicles tend to command higher prices, reflecting differences between compact cars, sedans, and SUVs.\
+-   **Seating Capacity:** Cars with more seats (e.g., 7–8) show noticeably higher price levels.
+
+Overall, the plots highlight skewed distributions, true market-based outliers, and size-related price patterns—supporting the later use of log transformations and the inclusion of structural vehicle features in the models.
+
+### Outliers
+
+```{r}
+library(dlookr)
+dlookr::diagnose_outlier(cars_data)
+
+boxplot(cars_data$Price, plot = FALSE)$out
+```
+
+The outlier diagnostics show that several variables contain extreme values, but most reflect genuine differences between vehicle types rather than data errors:
+
+-   **Price:** About 10% of observations are high-priced outliers, confirming the right-skewed distribution and supporting the use of a log transformation.
+-   **Year:** Only a few older cars are flagged as outliers, with minimal impact on the mean.
+-   **Kilometer:** Around 1–2% of cars have very high mileage
+-   **Width and Height:** Outliers correspond to larger vehicles
+-   **Seating Capacity:** Nearly 18% outliers reflect 7–8 seat vehicles, indicating large category differences.
+-   **Fuel Tank Capacity:** A few large vehicles have unusually high capacities, slightly raising the mean.
+
+Because outliers mainly represent real market segments like luxury cars, high-mileage vehicles, and larger SUVs,rather than removing them, we will do transformations such as log(Price) and log(Kilometer) tp reduce their influence in modeling.
+
+### Correlation Plot
+
+```{r, corrplot}
+library(corrplot)
+library(dplyr)
+
+# Select numeric variables only
+num_vars <- cars_data %>%
+  dplyr::select(where(is.numeric))
+
+# Correlation matrix
+corr_matrix <- cor(num_vars, use = "complete.obs")
+
+# Correlation plot
+corrplot(
+  corr_matrix,
+  method = "circle",
+  type = "upper",
+  tl.col = "black",
+  tl.srt = 45
+)
+```
+
+The correlation plot shows several meaningful relationships among the numeric variables. Price is positively correlated with vehicle dimensions (length, width, height) and fuel tank capacity, indicating that larger vehicles generally sell for higher prices. Year also has a positive association with Price, meaning newer cars tend to be more expensive. Kilometer shows a weak negative correlation with Price, consistent with lower values for high-mileage vehicles. The vehicle dimensions are strongly correlated with one another.\
+
+Overall, the correlations support including size, age, and mileage as key predictors in the regression models.
+
+### Relationships Between Price and Predictors (Y \~ X Plots)
+
+```{r}
+library(DataExplorer)
+
+# Select only numeric variables including Price
+numeric_vars <- names(cars_data)[sapply(cars_data, is.numeric)]
+
+# Create a numeric-only dataset
+numeric_subset <- cars_data[, numeric_vars]
+
+# Generate scatterplots of all numeric predictors vs Price
+plot_scatterplot(
+  data = numeric_subset,
+  by = "Price",
+  sampled_rows = 1000L,
+  geom_point_args = list(alpha = 0.6)
+)
+```
+
+The Y \~ X scatterplots show several important patterns:
+
+-   **Vehicle size (Length, Width, Height, Fuel Tank Capacity):** Larger vehicles tend to have higher prices, with clear upward trends across size-related features.
+-   **Seating Capacity:** Cars with 7–8 seats show noticeably higher prices than standard 5-seat vehicles.
+-   **Kilometer:** Price declines sharply as mileage increases, showing a strong negative relationship.
+-   **Year:** Newer cars cluster at higher prices, reflecting typical depreciation over time.
+
+Overall: The plots indicate that price is strongly influenced by age, usage, and vehicle size, supporting the use of transformations and interaction terms in later modeling.
+
+### Scatter Plot: Price by Kilometer Driven
+
+```{r}
+ggplot(cars_data, aes(x = Kilometer, y = Price)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(method = "loess", se = FALSE) +
+  coord_cartesian(xlim = c(0, 250000)) +
+  labs(title = "Price vs Kilometers Driven (0–250,000 km)", 
+       x = "Kilometers Driven", 
+       y = "Selling Price") +
+  theme_minimal()
+```
+
+The scatter plot shows a negative relationship between Price and Kilometer. Prices are highest when mileage is low, and they decline rapidly as mileage increases, especially within the first 50,000 km. Beyond roughly 100,000 km, prices level off at lower values, with fewer high-priced vehicles. The LOESS curve confirms the nonlinear pattern, indicating diminishing returns as mileage grows. This shape supports applying a log transformation to both Price and Kilometer for a more linear relationship in modeling.There are a few outlier points at higher mileage representing premium, rare, or well-maintained luxury/performance vehicles that retain high value despite high mileage.
+
+### Log Transformation + Scatter Plot
+
+```{r}
+cars_data$log_Price <- log(cars_data$Price + 1)
+cars_data$log_Kilometer <- log(cars_data$Kilometer + 1)
+
+ggplot(cars_data, aes(x = log_Kilometer, y = log_Price)) +
+  geom_point(alpha = 0.6, color = "purple") +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(
+    title = "log(Price) vs log(Kilometer)",
+    x = "log(Kilometers Driven)",
+    y = "log(Price)"
+  ) +
+  theme_minimal()
+
+```
+
+The new scatterplot reveals a clearer and more linear negative relationship between mileage and price. After transforming both variables, the influence of extreme values is reduced, and the data spread becomes more even across the range. The fitted regression line now aligns more closely with the main data cloud, showing that price decreases proportionally as mileage increases. Although the points appear dense, the transformation improves linearity and stabilizes variance, making the log-transformed variables more appropriate for regression modeling.
+
+### Interaction (Car Age and Mileage)
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Create age and log price once
+cars_data <- cars_data %>%
+  mutate(
+    Car.Age   = max(Year, na.rm = TRUE) - Year,
+    log_Price = log(Price)
+  )
+
+# 3 mileage groups using quantiles
+cars_data <- cars_data %>%
+  mutate(Mileage_Level = cut(
+    Kilometer,
+    breaks = quantile(Kilometer, probs = c(0, .33, .66, 1), na.rm = TRUE),
+    include.lowest = TRUE
+  ))
+
+ggplot(cars_data, aes(x = Car.Age, y = log_Price, color = Mileage_Level)) +
+  geom_point(alpha = 0.2, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.4) +
+  coord_cartesian(xlim = c(0, 15)) +
+  labs(
+    title = "Interaction Effect of Car Age and Mileage on log(Price)",
+    x = "Car Age (years)",
+    y = "log(Price)",
+    color = "Mileage Level"
+  ) +
+  theme_minimal()
+```
+
+Price decreases with Car Age for all mileage groups, but the slope is steeper for high-mileage cars and flatter for low-mileage cars. This suggests that age reduces price more sharply when the car has higher kilometers, so mileage moderates the effect of age on price.
+
+### Interaction (Car Age and Owner)
+
+```{r}
+cars_data <- cars_data %>%
+  mutate(
+    Owner_Binary = ifelse(Owner == "First", "First Owner", "Multiple Owners"),
+    Owner_Binary = factor(Owner_Binary)
+  )
+
+ggplot(cars_data, aes(x = Car.Age, y = log_Price, color = Owner_Binary)) +
+  geom_point(alpha = 0.2, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.4) +
+  coord_cartesian(xlim = c(0, 15)) +
+  labs(
+    title = "Interaction Effect of Car Age and Owner on log(Price)",
+    x = "Car Age (years)",
+    y = "log(Price)",
+    color = "Owner Type"
+  ) +
+  theme_minimal()
+```
+
+Cars with multiple owners (aqua line) have higher log-prices than first-owner vehicles (orange line) at every age, but both groups show a similar downward trend as cars get older. This suggests that owner history in this dataset mainly shifts the overall price level rather than strongly changing how price declines with age; depreciation with age is fairly similar for both groups.
+
+# DATA PREPARATION
+
+## Converting Categorical Variables to Factors
+
+```{r}
+cars_data <- cars_data %>%
+mutate(across(where(is.character), as.factor))
+
+str(cars_data)
+```
+
+All character variables were successfully converted to factors, ensuring that categorical information is properly recognized for modeling. Treating these variables as factors is essential because they represent categories rather than numeric quantities.
+
+## Addresing Missing Values
+
+**Median Imputation (Numeric Variables)**
+
+```{r}
+cars_data <- cars_data %>%
+  mutate(
+    across(
+      .cols = where(is.numeric),
+      .fns = ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)
+    )
+  )
+```
+
+Median imputation was applied to numeric variables to replace missing values with the median of each variable, which is appropriate for skewed data because the median is robust to outliers and preserves the overall distribution.
+
+**Mode Imputation (Categorical Variables)**
+
+```{r}
+cars_data <- cars_data %>%
+  mutate(across(where(is.factor), ~ as.character(.x))) %>%  
+  mutate(across(where(is.character), ~ na_if(.x, "")))     
+
+mode_value <- function(x) {
+  ux <- unique(x[!is.na(x)])
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+cars_data <- cars_data %>%
+  mutate(
+    across(
+      .cols = where(is.character),
+      .fns = ~ ifelse(is.na(.x), mode_value(.x), .x)
+    )
+  )
+cars_data <- cars_data %>%
+  mutate(across(where(is.character), as.factor))
+```
+
+Categorical variables were imputed using the mode, filling missing values with the most common category in each variable to maintain consistency in factor levels without introducing artificial categories.
+
+**Log transforms for Price and Kilometer**
+
+```{r}
+# Log-transform key skewed variables
+cars_data <- cars_data %>%
+  mutate(
+    log_Price     = log(Price),
+    log_Kilometer = log(Kilometer + 1)  # +1 in case of zeros
+  )
+
+```
+
+Price and Kilometer were log-transformed to reduce skewness, stabilize variance, and create a more linear relationship suitable for regression modeling.
+
+**Adressing Variables**
+
+The Max.Power and Max.Torque variables contain combined information about engine output and the RPM at which that output occurs (e.g., "87 bhp \@ 6000 rpm"). Converting these fields into a single numeric value (such as only bhp or only Nm) would remove the RPM component, which carries valuable information about how the engine delivers power. For this reason, these variables were kept as categorical to preserve performance patterns and allow clearer interpretation.
+
+# MODELING
+
+## MODEL 1: LINEAR REGRESSION
+
+#### Partition 70/30 and check proportions
+
+```{r, partition}
+set.seed(1)
+library(caret)
+
+cars_dataLR <- cars_data
+
+myIndex <- createDataPartition(cars_dataLR$log_Price, p = 0.70, list = FALSE)
+
+trainSetLR  <- cars_dataLR[myIndex, ]
+validationSetLR <- cars_dataLR[-myIndex, ]
+
+mean(trainSetLR$log_Price)
+mean(validationSetLR$log_Price)
+mean(cars_dataLR$log_Price)
+```
+
+The data was split into a 70% training set and a 30% validation set while keeping the distribution of log(Price) similar in both groups. The mean log(Price) values in the training (13.79) and validation (13.84) sets are almost the same as the overall mean (13.81). This shows that the split is well-balanced and that both sets represent the data fairly for building and testing the model.
+
+### Interpretation of Feature Creation After Data Split
+
+```{r}
+library(dplyr)
+
+trainSetLR <- trainSetLR %>%
+mutate(
+Car.Age       = max(Year, na.rm = TRUE) - Year,
+log_Kilometer = log(Kilometer + 1),
+Owner_Binary  = factor(ifelse(Owner == "First", "First Owner", "Multiple Owners"))
+)
+
+validationSetLR <- validationSetLR %>%
+mutate(
+Car.Age       = max(Year, na.rm = TRUE) - Year,
+log_Kilometer = log(Kilometer + 1),
+Owner_Binary  = factor(ifelse(Owner == "First", "First Owner", "Multiple Owners"))
+)
+```
+
+New variables were created to prepare the data for modeling. Car.Age was calculated from the vehicle’s manufacturing year, log_Kilometer was added to reduce skewness in mileage, and Owner_Binary was created to group cars into “First Owner” versus “Multiple Owners.” These features help capture key patterns such as depreciation, usage effects, and ownership history in a way that works better for regression.
+
+### Very simple raw model (for comparison only)
+
+```{r}
+model0 <- lm(Price ~ Year + Kilometer, data = trainSetLR)
+summary(model0)
+```
+
+-   Both predictors, Year and Kilometer, are statistically significant in explaining Price.
+-   The positive coefficient for Year (198,693) means newer cars tend to have higher prices.
+-   The negative coefficient for Kilometer (-2.489) shows that higher mileage slightly reduces price.
+-   The intercept is not meaningful because a Year of zero is outside the data’s range.
+-   The R² value is very low (≈ 0.095), meaning the model explains less than 10% of price variation.
+-   The large residual standard error (about 2.26 million) indicates high prediction errors.
+
+### Baseline linear regression with transformations
+
+```{r}
+model1 <- lm(log_Price ~
+Car.Age +
+log_Kilometer +
+Fuel.Type +
+Transmission +
+Owner_Binary +
+Drivetrain +
+Seating.Capacity +
+Length +
+Width +
+Height +
+Fuel.Tank.Capacity,
+data = trainSetLR)
+
+summary(model1)
+
+```
+
+This baseline model uses log(Price) as the outcome and includes car age, logged mileage, fuel type, transmission, ownership, drivetrain, seating capacity, and vehicle size variables. The model performs well, explaining about 88% of the variation in log(Price) (R² = 0.8824) with a low residual standard error (0.33). The overall F-test is highly significant, indicating that the predictors jointly provide strong explanatory power.
+
+Key findings include (ceteris paribus):
+
+-   **Car Age:** Prices decline as vehicles get older; each additional year is associated with about a 10% decrease in price.
+
+-   **Mileage:** Higher mileage lowers price even after adjusting for age, as shown by the negative log_Kilometer coefficient. A 1-unit increase in log(Km) (≈ multipling km by 2.7) lowers log-price by 0.079, or about 7–8% so for a 1,000,000 vehicle, this is roughly 75,000–80,000 less, ceteris paribus.
+
+-   **Fuel Type:** Hybrid cars show a significant price premium, while petrol vehicles are priced lower than the reference category.
+
+-   **Transmission:** Manual cars sell for substantially less than automatics(≈30–35% lower price.), reflecting a large and significant price discount.
+
+-   **Drivetrain:** AWD vehicles command the highest prices, while FWD and RWD models show lower price levels, in fact about 42–45% and 17–18% lower prices respectively.
+
+-   **Size and Capacity:** Longer and wider vehicles with larger fuel tanks tend to sell for more, consistent with higher pricing for larger car classes such as SUVs.
+
+-   **Ownership:** The indicator for multiple previous owners is not statistically significant, suggesting ownership history adds limited value once age, mileage, and mechanical features are included.
+
+Other Non-Significant Variables, Ceteris Paribus:
+
+-   Ownership history
+-   CNG, LPG, CNG+Petrol fuel types
+-   Electric (likely due to small sample size)
+
+Overall, the baseline model shows strong predictive power and reflects expected market patterns in used-car pricing.
+
+### Linear Regression with Interactions
+
+```{r}
+model2_interact <- lm(
+log_Price ~
+Car.Age * log_Kilometer +      
+Car.Age * Owner_Binary +       
+Fuel.Type +
+Transmission +
+Drivetrain +
+Seating.Capacity +
+Length +
+Width +
+Height +
+Fuel.Tank.Capacity,
+data = trainSetLR
+)
+
+summary(model2_interact)
+```
+
+This interaction model adds two interaction terms—Car Age × log(Kilometer) and Car Age × Ownership—to the baseline regression. The model shows a slight improvement in fit, increasing the R² to 0.8864 (from 0.8824), and reducing the residual standard error to 0.329. The overall F-test is highly significant, confirming that the predictors together explain a large portion of the variation in log(Price).
+
+Statistically significant features:
+
+-   **Car Age and Mileage Interaction (β = –0.0228):** Older cars with high mileage lose value faster than older cars with low mileage. For example, for a typical car with \~60,000 km (log ≈ 11), each additional year reduces log-price by roughly 0.11, equal to about ₹110,000 on a ₹1,000,000 car.This supports the pattern observed in the EDA.
+-   **Car Age and Ownership Interaction:** This interaction is not significant, indicating that depreciation with age is similar for first-owner and multiple-owner vehicles.
+-   **Main Effects:** The direction and significance of the main predictors remain consistent with the baseline model. Newer, lower-mileage vehicles sell for more; manual transmission lowers price; AWD vehicles are valued highest; and larger vehicles (greater length, width, and fuel tank capacity) command higher prices.
+-   **Fuel Type:** Hybrid vehicles remain significantly higher-priced, while petrol cars continue to be priced lower than the reference category.
+-   **Ownership:** Multiple owners do not show a meaningful effect once other predictors and interactions are included.
+
+Overall, the interaction model better captures how age and mileage jointly influence price, offering a slight improvement in explanatory power while maintaining the strong performance of the baseline model.
+
+(Note that for each of these relationships we are holding everything else constant.)
+
+### Trimmed interaction model
+
+```{r}
+model2_trim <- lm(
+log_Price ~
+Car.Age * log_Kilometer + # keep this important interaction
+Fuel.Type +
+Transmission +
+Drivetrain +
+Seating.Capacity +
+Length +
+Width +
+Height +
+Fuel.Tank.Capacity,
+data = trainSetLR
+)
+
+summary(model2_trim)
+```
+
+In the trimmed model, the ownership variables (Owner_Binary and its interaction with Car.Age) were removed because they were not statistically significant and did not improve prediction. After trimming, the model’s fit remained almost identical, with the same R² and a slightly lower residual error. This means the model became simpler while keeping the same level of accuracy.
+
+### Prediction on Validation Set
+
+```{r}
+library(Metrics)
+library(dplyr)
+
+# Predict log(Price) using the trimmed linear regression model
+pred_log_lr <- predict(model2_trim, newdata = validationSetLR)
+
+# Back-transform to original Price scale
+pred_price_lr <- exp(pred_log_lr)
+
+# Combine actual and predicted values
+validation_lr <- validationSetLR %>%
+  mutate(Pred_Price = pred_price_lr) %>%
+  dplyr::select(Price, log_Price, Pred_Price)
+
+head(validation_lr)
+```
+
+The trimmed linear regression model produces realistic price predictions on the validation set. Most predictions fall reasonably close to the actual selling prices, with some underestimation for higher-priced cars. Overall, these results suggest that the model captures the main pricing patterns in the data and provides a useful starting point.
+
+## MODEL 2: CART
+
+#### Partition (70/30) and Check proportions
+
+```{r}
+set.seed(1)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(dplyr)
+
+cars_dataCART <- cars_data
+
+myIndex <- createDataPartition(cars_dataCART$log_Price, p = 0.70, list = FALSE)
+
+trainSetCART <- cars_dataCART[myIndex, ]
+validationSetCART <- cars_dataCART[-myIndex, ]
+
+mean(trainSetCART$log_Price)
+mean(validationSetCART$log_Price)
+mean(cars_dataCART$log_Price)
+
+```
+
+The CART model uses the same 70/30 train–validation split structure as the linear regression model.
+
+#### Regression Tree Model
+
+Set the control for 10-fold cross validation, which we will need for the best tree.\
+
+```{r}
+myCtrl <- trainControl(method = "cv", number = 10)
+```
+
+### "Full Tree" Demonstration Only
+
+```{r}
+full_tree_like <- train(
+log_Price ~ Car.Age + log_Kilometer + Fuel.Type + Transmission +
+Owner_Binary + Drivetrain + Seating.Capacity +
+Length + Width + Height + Fuel.Tank.Capacity,
+data      = trainSetCART,
+method    = "rpart",
+trControl = trainControl(method = "none"),  # no CV, just fit once
+tuneGrid  = data.frame(cp = 0),
+control   = rpart::rpart.control(
+cp        = 0,
+minsplit  = 2,
+minbucket = 1,
+maxdepth  = 30
+)
+)
+
+full_tree_like
+
+```
+
+#### CP Table
+
+```{r}
+head(full_tree_like$finalModel$cptable, 6)
+tail(full_tree_like$finalModel$cptable, 6)
+```
+
+#### Variable Importance
+
+```{r}
+print(caret::varImp(full_tree_like))
+```
+
+The full unpruned tree produces an extremely complex model that captures nearly all variation in the training data. The CP table shows that as the tree expands, the relative error approaches zero, which indicates overfitting rather than meaningful improvement. The variable-importance output confirms that the tree relies heavily on log(Kilometer), vehicle size variables (Length, Width, Height), and Car Age, with additional contributions from fuel type and ownership.
+
+#### Tree Diagram for full tree
+
+```{R}
+library(rpart.plot)
+prp(full_tree_like$finalModel, type = 1, extra = 1  , under = TRUE, digits=3)
+```
+
+### BEST TREE(Tuned CART Model)
+
+```{r}
+best_tree <- train(
+log_Price ~ Car.Age + log_Kilometer + Fuel.Type + Transmission +
+Owner_Binary + Drivetrain + Seating.Capacity +
+Length + Width + Height + Fuel.Tank.Capacity,
+data = trainSetCART,
+method = "rpart",
+trControl = myCtrl,
+tuneLength = 25, # number of cp values to try
+metric = "RMSE", # optimize RMSE
+control = rpart::rpart.control(
+minsplit = 2,
+minbucket = 1,
+cp = 0 # allow small cp, caret will choose optimal
+)
+)
+
+best_tree$resample
+```
+
+RMSE values range from 0.30 to 0.46, showing moderate prediction accuracy with some variability across samples. R² values remain high (0.78–0.90), indicating that the model captures a substantial amount of variation in log(Price). MAE values (0.24–0.32) confirm that errors are generally small. Overall, the cross-validation process ensures that the selected cp value provides a balanced and generalizable CART model.
+
+#### Results
+
+Show all cpvalues caret tried and which one was chosen.\
+
+```{r}
+best_tree$results
+cat("\nBest Tuned cp value Chosen:", best_tree$bestTune$cp, "\n")
+```
+
+The tuning process evaluates several candidate cp values using 10-fold cross-validation and selects the one with the lowest RMSE. The best-performing cp was 0.002786, which produced the lowest RMSE and therefore the strongest predictive accuracy during cross-validation.
+
+Selecting the smallest RMSE ensures the final tree balances model complexity with predictive accuracy, resulting in a well-tuned and generalizable CART model.
+
+#### Variable Importance (Best Tree)
+
+```{r}
+print(caret::varImp(best_tree))
+```
+
+In the tuned tree vehicle size (length and width), Car.Age, and Fuel.Tank.Capacity are among the most important variables. Height, DrivetrainFWD, and log_Kilometer also play a role in the splits.
+
+#### Best Model Output and Tree Plot
+
+```{r}
+best_tree$finalModel   # narrative summary of splits
+
+prp(
+best_tree$finalModel,
+type  = 1,
+extra = 1,
+under = TRUE,
+digits = 3
+)
+
+```
+
+The tuned CART model identifies **Width** as the strongest predictor, forming the first major split that separates larger, higher-priced vehicles from smaller ones. Subsequent splits rely on variables such as **Car Age**, **Transmission**, **Mileage (log_Kilometer)**, and size features like **Length** and **Height**.
+
+-   Wider vehicles tend to fall into higher-price nodes.\
+-   Newer cars (lower Car Age) are directed toward higher predicted prices.\
+-   Automatic transmission is associated with higher-value branches, while manual vehicles often fall into lower-price paths.\
+-   Higher mileage pushes vehicles into lower-price terminal nodes.\
+-   Longer and taller vehicles frequently end in higher-price branches.
+
+Overall, the CART model shows that vehicle **size** and **age** are the strongest drivers of used-car price in this dataset.
+
+#### Predictions on the Validation Set
+
+```{r}
+library(Metrics)
+library(dplyr)
+
+pred_tree_log <- predict(best_tree, newdata = validationSetCART)
+
+pred_tree_price <- exp(pred_tree_log)
+
+validation_cart <- validationSetCART %>%
+mutate(Pred_Price = pred_tree_price) %>%
+dplyr::select(Price, log_Price, Pred_Price)
+
+head(validation_cart)
+
+```
+
+The tuned CART model produces validation predictions that generally follow the direction of the actual prices but with more variability than the linear regression model.
+
+# EVALUATION
+
+### REC Curves
+
+```{r}
+library(ggplot2)
+library(pracma)   # for trapz()
+library(knitr)
+
+# Function: REC curve with AOC
+
+rec_curve_with_aoc <- function(actual, predicted, model_name) {
+
+# Absolute residuals
+
+residuals <- abs(actual - predicted)
+residuals_sorted <- sort(residuals)
+
+# Cumulative percentage (0–1)
+
+cum_pct <- (1:length(residuals_sorted)) / length(residuals_sorted)
+
+rec_data <- data.frame(
+Residuals = residuals_sorted,
+CumPct    = cum_pct
+)
+
+# AOC 
+
+AOC_value <- trapz(rec_data$Residuals, rec_data$CumPct)
+
+p <- ggplot(rec_data, aes(x = Residuals, y = CumPct * 100)) +
+geom_line(linewidth = 1.1) +
+labs(
+title    = paste("REC Curve -", model_name),
+subtitle = paste("AOC =", round(AOC_value, 4)),
+x        = "Residual Error (Price, INR)",
+y        = "Cumulative Percentage of Observations (%)"
+) +
+theme_minimal()
+
+list(
+AOC  = AOC_value,
+plot = p
+)
+}
+
+# Linear Regression (Trimmed) – REC Curve + AOC
+
+lr_rec <- rec_curve_with_aoc(
+actual    = validation_lr$Price,
+predicted = validation_lr$Pred_Price,
+model_name = "Linear Regression (Trimmed)"
+)
+
+
+lr_rec$plot
+
+
+# CART – REC Curve + AOC
+
+cart_pred_log   <- predict(best_tree, newdata = validationSetCART)
+cart_pred_price <- exp(cart_pred_log)   # back-transform from log(Price)
+
+cart_rec <- rec_curve_with_aoc(
+actual    = validationSetCART$Price,
+predicted = cart_pred_price,
+model_name = "CART Regression Tree"
+)
+
+cart_rec$plot
+
+# AOC Comparison Table
+
+aoc_comparison <- data.frame(
+Model = c("Linear Regression (Trimmed)", "CART Regression Tree"),
+AOC   = c(lr_rec$AOC, cart_rec$AOC)
+)
+
+kable(aoc_comparison, digits = 4, caption = "AOC Comparison from REC Curves")
+
+
+```
+
+The REC curves for both models rise very steeply at the beginning, indicating that a large proportion of the cars in the validation set are predicted with relatively small pricing errors.
+
+The trimmed linear regression model produces an AOC of 14.7 million, while the CART regression tree produces a higher AOC of 17.5 million. Since lower AOC indicates that prediction errors remain smaller and accumulate more slowly, this result confirms that the linear regression model maintains more consistent accuracy across the entire validation set.
+
+The CART model, although effective at capturing nonlinear patterns, generates more large residual errors, typically for higher-priced or less common vehicles, causing its AOC to increase more rapidly.\
+
+### Comparison of metrics
+
+```{r}
+err_lr <- validation_lr$Price - validation_lr$Pred_Price
+
+RMSE_lr <- sqrt(mean(err_lr^2))
+MAE_lr  <- mean(abs(err_lr))
+MAD_lr  <- median(abs(err_lr))
+MAPE_lr <- mean(abs(err_lr) / validation_lr$Price) * 100
+
+cart_pred_log   <- predict(best_tree, newdata = validationSetCART)
+cart_pred_price <- exp(cart_pred_log)
+
+RMSE_cart <- sqrt(mean((validationSetCART$Price - cart_pred_price)^2))
+MAE_cart  <- mean(abs(validationSetCART$Price - cart_pred_price))
+MAD_cart  <- median(abs(validationSetCART$Price - cart_pred_price))
+MAPE_cart <- mean(abs(validationSetCART$Price - cart_pred_price) / validationSetCART$Price) * 100
+
+comparison_table <- data.frame(
+Metric = c("RMSE", "MAE", "MAD", "MAPE (%)"),
+Linear_Regression = c(RMSE_lr, MAE_lr, MAD_lr, MAPE_lr),
+CART_Model        = c(RMSE_cart, MAE_cart, MAD_cart, MAPE_cart)
+)
+
+knitr::kable(comparison_table, digits = 3, caption = "Model Performance Comparison on Validation Set")
+
+```
+
+**Linear Regression Model**
+
+The trimmed linear regression model shows an RMSE of about ₹1.36 million and an MAE of roughly ₹507,000, indicating that its predictions typically fall within a few lakh rupees of the actual selling price. The MAD of ₹157,280 shows that most errors cluster near the center, and the MAPE of 26.14% reflects moderate percentage error given the wide range of vehicle prices in the dataset.
+
+**CART**
+
+The CART regression tree produces higher error values across all metrics when compared with the linear model, with an RMSE of ₹1.69 million and an MAE of ₹658,000, meaning its predictions deviate more from actual prices on average. Its MAD of ₹167,339 indicates slightly wider dispersion in errors, and the MAPE of 30.11% shows larger percentage errors relative to vehicle price.
+
+## Model Selection
+
+The trimmed linear regression model consistently delivers smaller prediction errors and a smoother error distribution, as reflected in its lower RMSE, MAE, and AOC values. These results indicate that the linear model better captures the continuous relationships between age, mileage, size, and selling price, producing more reliable estimates across the full price spectrum.
+
+The CART regression tree, while valuable for interpretability, shows wider error dispersion and higher overall variability. Its stepwise structure creates broader price segments, which can oversimplify real market patterns and lead to larger deviations for vehicles that fall between split points. Although the tree offers clear decision pathways that are easy to communicate, its predictive performance is less stable relative to the linear model.
+
+Based on accuracy, consistency, and error behavior, the trimmed linear regression model is the best model for deployment. It provides the strongest predictive performance while maintaining interpretability. The CART model remains useful as a supporting tool for visual explanation of pricing drivers but not as the primary prediction engine.
+
+# Deployment
+
+## Summary of Findings
+
+### Research Questions
+
+**Which vehicle attributes have the strongest influence on used-car selling price?**
+
+The analysis shows that price in the used-car market is shaped primarily by indicators of vehicle wear, performance, and vehicle class, rather than seller demographics or ownership history. Among all predictors, age and mileage consistently exert the strongest downward pressure on price. Both the linear model and the regression tree place older, high-mileage vehicles into the lowest predicted price groups. This pattern highlights the fact that buyers treat age and use as the clearest signals of remaining vehicle life
+
+-   **Car Age:**\
+    Age is the stronger prediction in both models.Older cars sell for substantially less even after controlling for all other features. Each additional year lowers price, reflecting depreciation and buyer concerns about long-term reliability.\
+    **Mileage (log_Kilometer):**\
+    Higher mileage significantly reduces price. The impact is strongest at lower mileage levels, meaning buyers penalize early wear more sharply.
+
+-   **Interaction: Age × Mileage:**\
+    Cars that are both old and high-mileage lose value at the fastest rate.
+
+-   **Transmission Type (manual vs automatics)**\
+    Manual transmission has a large, significant negative effect on price (coefficient ≈ –0.36), indicating that manuals sell for noticeably less than automatics. The effect size corresponds to a meaningful reduction in resale value. In the tree model, transmission emerges as one of the top splitting variables. This emphasizes the increasing market preference for automatic vehicles.
+
+-   **Drivetrain (FWD / RWD / AWD):**\
+    AWD vehicles consistently command the highest prices in the linear model, while FWD and RWD show significant discounts relative to AWD. The decision tree uses drivetrain when distinguishing between moderate and high-value vehicles, showing that buyers are willing to pay more for perceived performance, safety, and capability associated with AWD systems.
+
+**How accurately can predictive models estimate used-car prices?**
+
+The trimmed linear regression model provides the most accurate and consistent predictions on new, unseen vehicles. Across all evaluation metrics (RMSE, MAE, MAD, and MAPE), the linear model shows smaller and more stable errors compared to the CART regression tree. Because it incorporates log-transformed price and mileage, along with an interaction between age and mileage, the model captures depreciation and usage patterns in a smooth, continuous way. This reduces the risk of large mispricing events.
+
+In contrast, the CART regression tree produces wider variation in predicted values and is more sensitive to small data fluctuations. While the tree is helpful for interpretation, it is less reliable for precise price estimation.
+
+Overall, the linear model offers stronger forecasting performance for real-world pricing decisions.
+
+### Limitations
+
+While the linear regression model performs well overall, it has a few limitations to keep in mind. The dataset reflects only the vehicles included in the sample, so predictions may be less accurate for rare models, electric or alternative-fuel cars, and very high-priced vehicles. Market conditions also change quickly; without regular updates, the model may drift away from current price trends. Additionally, some important real-world factors that matter currently like service quality, local demand, and brand-specific reputation, were not available in the data and therefore cannot be reflected in the predictions. For these reasons, the model should be used as a reliable pricing guide, but not as the sole determinant of final pricing decisions.
+
+## Business Recommendations
+
+1.  **Update and retrain the model monthly as new car data becomes available**
+
+    Used-car prices shift rapidly with fuel price changes, seasonal buying cycles, and brand-specific trends. Used-car prices shift quickly due to fuel price changes, seasonal demand, and brand-specific trends. Keep training the model often with the latest sales data ensures that price estimates remain aligned with current market conditions. Focus specifically on predictors such as mileage, age, and drivetrain that were consistently strong in the model, updating these patterns regularly will strengthen pricing accuracy.
+
+2.  **Use the CART model as a decision-support tool**
+
+    The regression tree is valuable for explaining which features drive prices However, the linear model outperforms CART in prediction accuracy. Cart model could be used just to support reasoning and customer communication, while the linear model should produce the final recommended sale price.
+
+3.  **Use mileage and age-based discounting to price cars more accurately**
+
+    The interaction between age and mileage shows that value declines much faster when both factors are high. Older cars with higher mileage should receive more discounts, while newer, low-mileage cars can be priced at premium levels without reducing demands. This pricing approach aligns directly with observed buyer behavior in the data.
+
+4.  **Highlight and premium-price hybrid and AWD vehicles**
+
+    Hybrid vehicles showed one of the strongest positive coefficients (+0.41), meaning they sell for almost \~50% more than comparable non-hybrids. AWD vehicles also hold higher value than FWD or RWD cars. These vehicles can be priced above standard models and marketed as ppremium high value cars.
+
+5.  **Use vehicle size (length, width, tank capacity) to identify high-value stock**
+
+    Length, width, and fuel tank capacity were all significant positive predictors. Larger vehicles like consistently sell at higher prices.These vehicles naturally command higher prices and offer better margins.Use the model’s predictions to guide which vehicles the dealership should prioritize purchasing at auctions.
+
+6.  **Use the model to identify underpriced vehicles before posting them for sale**
+
+    By comparing the model’s predicted prices with the dealership’s planned listing prices, the business can quickly spot cars that may be undervalued. Vehicles priced below the prediction can be fixed and reviewed Over time, tracking these differences will also show which brands or vehicle types regularly sell for more than expected. This helps the dealership buy more of the models that perform well and avoid those that consistently underperform.
+
+# References
+
+## Data Source
+
+Birla, N. (2020). Vehicle dataset from CarDekho \[Data set\]. Cardekho\
+Retrieved from https://www.kaggle.com/datasets/nehalbirla/vehicle-dataset-from-cardekho
+
+## R version
+
+R Core Team. (2024). R: A language and environment for statistical computing (Version 4.5.1) \[Computer software\]. R Foundation for Statistical Computing. https://www.R-project.org/
+
+## R Packages Used
+
+Almeida, S., & Ghosh, S. (2023). *DataExplorer: Data exploration R package* \[R package\].\
+https://CRAN.R-project.org/package=DataExplorer
+
+Auguie, B. (2017). *gridExtra: Miscellaneous functions for “grid” graphics* \[R package\].\
+https://CRAN.R-project.org/package=gridExtra
+
+Borchers, H. W. (2024). *pracma: Practical numerical math functions* \[R package\].\
+https://CRAN.R-project.org/package=
+
+Chan, K. S. (2023). *gains: Model assessment tools for data mining* \[R package\].\
+https://CRAN.R-project.org/package=gains
+
+Gohel, D. (2024). *flextable: Functions for tabular reporting* \[R package\].\
+https://CRAN.R-project.org/package=flextable
+
+Hamner, B., & Frasco, M. (2018). *Metrics: Evaluation metrics for machine learning* \[R package\].\
+https://CRAN.R-project.org/package=Metrics
+
+Kuhn, M. (2008). *caret: Classification and regression training* \[R package\].\
+https://CRAN.R-project.org/package=caret
+
+Milborrow, S. (2024). *rpart.plot: Plot “rpart” models* \[R package\].\
+https://CRAN.R-project.org/package=rpart.plot
+
+OpenAI. (2025). *ChatGPT (GPT-5.1 version)* \[Large language model\]. https://chat.openai.com (The model was used to assist with portions of code generation. All outputs were reviewed and finalized by the author.)
+
+Robin, X., Turck, N., Hainard, A., Tiberti, N., Lisacek, F., Sanchez, J.-C., & Müller, M. (2011). *pROC: Display and analyze ROC curves* \[R package\]. BMC Bioinformatics, 12, 77.\
+https://CRAN.R-project.org/package=pROC
+
+Ryu, D. (2023). *dlookr: Tools for data diagnosis, exploration, and transformation* \[R package\].\
+https://CRAN.R-project.org/package=dlookr
+
+Therneau, T., & Atkinson, B. (2024). *rpart: Recursive partitioning and regression trees* \[R package\].\
+https://CRAN.R-project.org/package=rpart
+
+Wei, T., & Simko, V. (2021). *corrplot: Visualization of a correlation matrix* \[R package\].\
+https://CRAN.R-project.org/package=corrplot
+
+Weihs, C., Ligges, U., Luebke, K., & Raabe, N. (2005). *klaR: Classification and visualization* \[R package\].\
+https://CRAN.R-project.org/package=klaR
+
+Wickham, H. (2016). *ggplot2: Elegant graphics for data analysis* \[R package\].\
+https://CRAN.R-project.org/package=ggplot2
+
+Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., Francois, R., Grolemund, G., Hayes, A., Henry, L., Hester, J., Kuhn, M., Pedersen, T. L., Miller, E., Bache, S. M., Müller, K., Ooms, J., Robinson, D., Seidel, D. P., Spinu, V., … Yutani, H. (2019). *tidyverse: Easily install and load the tidyverse* \[R package\].\
+https://CRAN.R-project.org/package=tidyverse
+
+Xie, Y. (2015). *knitr: A general-purpose package for dynamic report generation in R* \[R package\].\
+https://CRAN.R-project.org/package=knitr
+
+***End of Report***
