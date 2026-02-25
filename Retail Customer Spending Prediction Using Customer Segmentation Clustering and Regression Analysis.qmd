@@ -1,6 +1,5 @@
 ---
-title: "DAT-3113 PROJECT"
-subtitle: "Final Data Analytics"
+title: "Retail Customer Spending Prediction Using Customer Segmentation Clustering and Regression Analysis"
 author: "Gabriela Chajon"
 date: "FALL 2023"
 format:
@@ -477,6 +476,7 @@ OpenAI. (2023). ChatGPT (June 26 version) [Large language model]. https://chat.o
 
 
 ## END
+
 
 
 
